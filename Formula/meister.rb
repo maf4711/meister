@@ -23,6 +23,10 @@ class Meister < Formula
   sha256 "34179b36bb0d899e356aed86066adcb998cd9da33d75ac053623052071b48369"
 
   depends_on "jq"
+  depends_on "mas"
+  depends_on "clamav"
+  depends_on "ollama"
+  depends_on "terminal-notifier"
   depends_on :macos
 
   def install
@@ -45,11 +49,8 @@ class Meister < Formula
         meister -n       Dry-Run (nur Vorschau)
         meister -h       Hilfe anzeigen
 
-      Optionale Abhaengigkeiten (separat installieren):
-        brew install --cask ollama     # AI Self-Healing
-        brew install terminal-notifier # Desktop-Benachrichtigungen
-        brew install clamav            # Antivirus-Scan (meister -A)
-        brew install mas               # Mac App Store Updates
+      Alle Abhaengigkeiten wurden automatisch installiert:
+        jq, mas, clamav, ollama, terminal-notifier
 
       Konfiguration:
         ~/.meister/config              # Einstellungen anpassen
