@@ -5,22 +5,20 @@
 # macOS Maintenance, Update & Self-Healing Script
 #
 # Installation:
-#   brew tap a321/meister /Users/a321/Documents/Tech/Scripts/homebrew-meister
+#   brew tap maf4711/meister
 #   brew install meister
 #
 # Update:
-#   cd /Users/a321/Documents/Tech/Scripts/homebrew-meister
-#   ./release.sh   # Neues Archiv + SHA aktualisieren
-#   brew upgrade meister
+#   brew update && brew upgrade meister
 
 class Meister < Formula
   desc "macOS Maintenance, Update & Self-Healing Script mit Ollama AI"
-  homepage "file:///Users/a321/Documents/Tech/Scripts/bin"
-  version "0.01"
+  homepage "https://github.com/maf4711/meister8"
+  version "0.04"
   license "MIT"
 
-  url "file:///Users/a321/Documents/Tech/Scripts/homebrew-meister/dist/meister-0.01.tar.gz"
-  sha256 "00022a2263ec559ddc575bca8d4d669c9c3d3dce53a0358e0651eb6826e23233"
+  url "https://github.com/maf4711/meister8/archive/refs/tags/v0.04.tar.gz"
+  sha256 "21ea512d7617e7da469ce2a888ea043b2122df3f89c94d1a2b105929228c29fa"
 
   depends_on "jq"
   depends_on "mas"
