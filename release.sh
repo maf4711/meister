@@ -1,7 +1,7 @@
 #!/bin/bash
 # release.sh - Neues Homebrew-Release von meister2026.sh erstellen
 #
-# 1. Pusht meister2026.sh nach maf4711/meister8
+# 1. Pusht meister2026.sh nach maf4711/meister
 # 2. Erstellt GitHub Release mit Tag
 # 3. Holt SHA256 des Tarballs
 # 4. Aktualisiert Formula + pusht homebrew-meister Tap
@@ -11,8 +11,8 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-SOURCE="/Users/a321/Documents/Tech/Scripts/bin/meister2026.sh"
-MEISTER8_DIR="/tmp/meister8-release"
+SOURCE="/Users/a321/Developer/meister/meister2026.sh"
+MEISTER_REPO="/Users/a321/Developer/meister"
 FORMULA="$SCRIPT_DIR/Formula/meister.rb"
 
 # Version aus Script extrahieren
@@ -25,12 +25,9 @@ fi
 echo "=== meister Release v${VERSION} ==="
 echo ""
 
-# 1. meister8 Repo aktualisieren
-echo "--- Schritt 1: meister8 Repo aktualisieren ---"
-rm -rf "$MEISTER8_DIR"
-gh repo clone maf4711/meister8 "$MEISTER8_DIR"
-cp "$SOURCE" "$MEISTER8_DIR/meister2026.sh"
-cd "$MEISTER8_DIR"
+# 1. meister Repo aktualisieren
+echo "--- Schritt 1: meister Repo aktualisieren ---"
+cd "$MEISTER_REPO"
 git add meister2026.sh
 if git diff --cached --quiet; then
     echo "Keine Aenderungen in meister2026.sh"
@@ -43,21 +40,21 @@ fi
 # 2. GitHub Release erstellen
 echo ""
 echo "--- Schritt 2: GitHub Release v${VERSION} ---"
-if gh release view "v${VERSION}" -R maf4711/meister8 &>/dev/null; then
+if gh release view "v${VERSION}" -R maf4711/meister &>/dev/null; then
     echo "Release v${VERSION} existiert bereits - loesche und erstelle neu"
-    gh release delete "v${VERSION}" -R maf4711/meister8 --yes
+    gh release delete "v${VERSION}" -R maf4711/meister --yes
     git tag -d "v${VERSION}" 2>/dev/null || true
     git push origin ":refs/tags/v${VERSION}" 2>/dev/null || true
 fi
-gh release create "v${VERSION}" -R maf4711/meister8 \
+gh release create "v${VERSION}" -R maf4711/meister \
     --title "meister v${VERSION}" \
     --notes "macOS Maintenance & Self-Healing Script v${VERSION}"
-echo "Release erstellt: https://github.com/maf4711/meister8/releases/tag/v${VERSION}"
+echo "Release erstellt: https://github.com/maf4711/meister/releases/tag/v${VERSION}"
 
 # 3. SHA256 des Tarballs holen
 echo ""
 echo "--- Schritt 3: SHA256 berechnen ---"
-TARBALL_URL="https://github.com/maf4711/meister8/archive/refs/tags/v${VERSION}.tar.gz"
+TARBALL_URL="https://github.com/maf4711/meister/archive/refs/tags/v${VERSION}.tar.gz"
 TMPTAR=$(mktemp)
 curl -sL "$TARBALL_URL" -o "$TMPTAR"
 SHA=$(shasum -a 256 "$TMPTAR" | awk '{print $1}')
@@ -90,8 +87,7 @@ fi
 CACHE_FILE=$(brew --cache meister 2>/dev/null || true)
 [ -f "$CACHE_FILE" ] && rm -f "$CACHE_FILE"
 
-# Aufraeumen
-rm -rf "$MEISTER8_DIR"
+# Fertig
 
 echo ""
 echo "=== Release v${VERSION} fertig! ==="
