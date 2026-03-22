@@ -2,7 +2,7 @@ class Meister < Formula
   desc "macOS Wartung, Update & Self-Healing"
   homepage "https://github.com/maf4711/meister"
   url "https://github.com/maf4711/meister/archive/refs/tags/v0.09.tar.gz"
-  sha256 "f9850dcec02765c546ef9a6988d209264b6b32a13af7046a3dac98f97b179e9c"
+  sha256 "3997a147ef6cc78deb2951888ed6a8ea144411c9fad6c53015c3579d3038e897"
   license "MIT"
   version "0.09"
 
