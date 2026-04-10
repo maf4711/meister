@@ -370,9 +370,45 @@ cleanup() {
     release_lock
 }
 
-trap 'CLEANUP_SIGNAL=INT; cleanup' INT
-trap 'CLEANUP_SIGNAL=TERM; cleanup' TERM
-trap 'cleanup' EXIT
+# Bandwidth monitor (bottom-left status line)
+BW_MONITOR_PID=""
+_bw_get_bytes() {
+    netstat -ib 2>/dev/null | awk '/en0.*Link/ && NF>=10 {print $7, $10; exit}'
+}
+start_bw_monitor() {
+    [ ! -t 1 ] && return  # no terminal, skip
+    (
+        local prev; prev=$(_bw_get_bytes)
+        local prev_in=${prev%% *} prev_out=${prev##* }
+        while true; do
+            sleep 1
+            local curr; curr=$(_bw_get_bytes)
+            local curr_in=${curr%% *} curr_out=${curr##* }
+            local dl=$(( (curr_in - prev_in) / 1024 ))
+            local ul=$(( (curr_out - prev_out) / 1024 ))
+            [ "$dl" -lt 0 ] 2>/dev/null && dl=0
+            [ "$ul" -lt 0 ] 2>/dev/null && ul=0
+            local cols; cols=$(tput cols 2>/dev/null || echo 80)
+            # Save cursor, move to bottom-left, clear line, print, restore cursor
+            printf '\0337\033[%d;1H\033[2K\033[2m ↓ %d KB/s  ↑ %d KB/s\033[0m\0338' "$(tput lines 2>/dev/null || echo 24)" "$dl" "$ul"
+            prev_in=$curr_in; prev_out=$curr_out
+        done
+    ) &
+    BW_MONITOR_PID=$!
+}
+stop_bw_monitor() {
+    if [ -n "$BW_MONITOR_PID" ]; then
+        kill "$BW_MONITOR_PID" 2>/dev/null
+        wait "$BW_MONITOR_PID" 2>/dev/null
+        BW_MONITOR_PID=""
+        # Clear status line
+        printf '\0337\033[%d;1H\033[2K\0338' "$(tput lines 2>/dev/null || echo 24)"
+    fi
+}
+
+trap 'CLEANUP_SIGNAL=INT; stop_bw_monitor; cleanup' INT
+trap 'CLEANUP_SIGNAL=TERM; stop_bw_monitor; cleanup' TERM
+trap 'stop_bw_monitor; cleanup' EXIT
 
 #############################
 # 3. OLLAMA SELF-HEALING
@@ -3542,8 +3578,9 @@ $DRY_RUN && echo "  ║   [DRY-RUN MODE]                        ║"
 echo "  ╚══════════════════════════════════════════╝"
 echo -e "${NC}"
 
+start_bw_monitor
 log INFO "Meister v1.0 started ($(date))"
-$DRY_RUN && log WARN "DRY-RUN: No Changes werden vorgenommen"
+$DRY_RUN && log WARN "DRY-RUN: No changes will be made"
 log STEP "   Logfile: $LOGFILE"
 [ -f "$MEISTER_CONFIG" ] && log STEP "   Config: $MEISTER_CONFIG loaded"
 if ! $MANUAL_FLAGS_SET && $AUTO_DETECT; then
@@ -3557,7 +3594,7 @@ if $SHOW_HEALTH; then health_dashboard; release_lock; exit 0; fi
 if $INSTALL_LAUNCHAGENT; then install_launchagent; release_lock; exit 0; fi
 
 # Fix #145: Get sudo FIRST - before Ollama and all modules
-# Verhindert Password-Prompt mitten im Lauf (z.B. at brew cask upgrade)
+# Prevents password prompt mid-run (e.g. during brew cask upgrade)
 if ! $DRY_RUN && $NEEDS_SUDO; then
     if [ -t 0 ]; then
         log INFO "Requesting Sudo..."
@@ -3565,7 +3602,7 @@ if ! $DRY_RUN && $NEEDS_SUDO; then
             keep_sudo
             log INFO "   Sudo OK"
         else
-            log WARN "Sudo verweigert or Timeout - some Operationen koennten fehlschlagen"
+            log WARN "Sudo denied or timeout - some operations may fail"
             log INFO "   Sudo not available"
         fi
     else
