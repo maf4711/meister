@@ -4,7 +4,7 @@
 # meister.sh
 #
 # Meister - macOS Maintenance, Update & Self-Healing
-# Version: 1.3
+# Version: 1.4
 # Date: 2026-04-10
 #
 # NEW in v1.1:
@@ -3422,8 +3422,13 @@ PLISTEOF
 
 # ── Dotfiles Sync Subcommands ──
 # If first arg is a sync subcommand, delegate to meister-dotfiles and exit
-_MEISTER_DOTFILES_SCRIPT="$(dirname "$(readlink -f "$0" 2>/dev/null || echo "$0")")/tools/dotfiles.sh"
-if [ -f "$_MEISTER_DOTFILES_SCRIPT" ]; then
+_MEISTER_SCRIPT_DIR="$(dirname "$(readlink -f "$0" 2>/dev/null || echo "$0")")"
+_MEISTER_DOTFILES_SCRIPT=""
+# Check next to script (dev), then ../libexec/tools (brew install)
+for _candidate in "$_MEISTER_SCRIPT_DIR/tools/dotfiles.sh" "$_MEISTER_SCRIPT_DIR/../libexec/tools/dotfiles.sh"; do
+    [ -f "$_candidate" ] && _MEISTER_DOTFILES_SCRIPT="$_candidate" && break
+done
+if [ -n "$_MEISTER_DOTFILES_SCRIPT" ]; then
     case "${1:-}" in
         push|up|u|pull|down|d|setup|init|scan|clone|bootstrap|boot|status|st|edit)
             exec bash "$_MEISTER_DOTFILES_SCRIPT" "$@"
@@ -3435,7 +3440,7 @@ fi
 for arg in "$@"; do
     case "$arg" in
         --help)    set -- "-h"; break ;;
-        --version) echo "meister v1.3"; exit 0 ;;
+        --version) echo "meister v1.4"; exit 0 ;;
         --dry-run) set -- "-n"; break ;;
         --*)       echo "[ERROR] Unknown option: $arg (see meister -h)"; exit 1 ;;
     esac
