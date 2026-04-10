@@ -314,7 +314,7 @@ CLONEHEAD
     else
       echo "clone \"$rel\" \"$remote\"" >> "$clone_script"
     fi
-    ((repo_count++))
+    repo_count=$((repo_count + 1))
   done < <(find "$dev" -maxdepth 4 -name .git -type d 2>/dev/null | sort)
 
   # Add --all block for archived
@@ -366,7 +366,7 @@ cmd_push() {
       safe_copy "$target" "$rel"
       ok "$rel"
     fi
-  done <<< "$(read_manifest)"
+  done < <(read_manifest)
 
   # Extras: Brewfile
   if command -v brew &>/dev/null; then
@@ -453,7 +453,7 @@ cmd_pull() {
     target="${target/\~/$HOME}"
     target="${target/\$HOME/$HOME}"
     safe_link "$rel" "$target"
-  done <<< "$(read_manifest)"
+  done < <(read_manifest)
 
   # SSH safety
   [ -d "$HOME/.ssh" ] && chmod 700 "$HOME/.ssh"
@@ -539,19 +539,19 @@ cmd_status() {
       actual=$(readlink "$target")
       if [ "$actual" = "$DOTFILES/$rel" ]; then
         ok "$target"
-        ((ok_count++))
+        ok_count=$((ok_count + 1))
       else
         fail "$target → $actual (expected $DOTFILES/$rel)"
-        ((fail_count++))
+        fail_count=$((fail_count + 1))
       fi
     elif [ -e "$target" ]; then
       fail "$target (not a symlink)"
-      ((fail_count++))
+      fail_count=$((fail_count + 1))
     else
       skip "$target (missing)"
-      ((fail_count++))
+      fail_count=$((fail_count + 1))
     fi
-  done <<< "$(read_manifest)"
+  done < <(read_manifest)
 
   echo
   log "${G}$ok_count linked${N}, ${R}$fail_count issues${N}"
