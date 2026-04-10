@@ -13,7 +13,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SOURCE="$SCRIPT_DIR/meister.sh"
 FORMULA="$SCRIPT_DIR/Formula/meister.rb"
-REPO="maf4711/meister"
+REPO="maf4711/homebrew-meister"
 
 # Extract version from script
 VERSION=$(grep -m1 '^# Version:' "$SOURCE" | awk '{print $3}')
@@ -90,7 +90,7 @@ echo ""
 echo "=== Release v${VERSION} done! ==="
 echo ""
 echo "Others install with:"
-echo "  brew tap maf4711/meister https://github.com/maf4711/meister"
+echo "  brew tap maf4711/meister"
 echo "  brew install meister"
 echo ""
 echo "You upgrade locally with:"
