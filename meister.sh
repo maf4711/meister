@@ -83,8 +83,8 @@ SPOTLIGHT_REINDEX_ON_ERROR=true    # Auto-reindex on error
 
 # iCloud Sync Fix (automatic on every run)
 ICLOUD_FIX_ENABLED=true            # iCloud diagnosis and repair
-ICLOUD_GHOST_DIRS_CLEAN=true       # Leere Geister-Folder in HOME entfernen
-ICLOUD_STUBS_SCAN=true             # Corrupt iCloud-Stubs erkennen (65535 links)
+ICLOUD_GHOST_DIRS_CLEAN=true       # Remove empty ghost folders in HOME
+ICLOUD_STUBS_SCAN=true             # Detect corrupt iCloud stubs (65535 links)
 ICLOUD_STUBS_DELETE=false          # Auto-delete corrupt stubs (default: off, safety)
 ICLOUD_RESTART_BIRD=true           # bird-Daemon neustartingn at Problemen
 ICLOUD_ORPHAN_CONTAINERS_WARN=true # Report orphaned CloudKit containers
@@ -107,18 +107,18 @@ GIT_REPO_MAXDEPTH=5                         # Max depth for repo search
 PERF_DISABLE_AGENT_PATTERNS="com.google.GoogleUpdater com.google.keystone com.macpaw.CleanMyMac com.bluebubbles.server"
 
 # Benannte Konstanten (Fix #40)
-LOG_MAX_SIZE=1048576          # 1MB - Log-Rotation Schwelle
+LOG_MAX_SIZE=1048576          # 1MB - Log rotation threshold
 LOG_GENERATIONS=3             # Anzahl rotierter Logs
-OLLAMA_STARTUP_WAIT=15        # Sekunden Warten auf Ollama-Server
+OLLAMA_STARTUP_WAIT=15        # seconds waiting for Ollama server
 LOG_CAPTURE_LINES=50          # Zeilen for Erroranalyse from Log
-DISK_CRITICAL_THRESHOLD=95    # Prozent - Notfall-Cleanup Schwelle
+DISK_CRITICAL_THRESHOLD=95    # Percent - emergency cleanup threshold
 
-# Fix #141: Tracken ob Meister Ollama selbst startingd has
+# Fix #141: Track whether Meister started Ollama itself
 OLLAMA_STARTED_BY_US=false
 
 # Fix #144: Auto-Detect Schwellwerte (via ~/.meister/config steuerbar)
 # Security Suite Konfiguration
-SECURITY_PERSISTENCE_AUDIT=true        # LaunchAgent/Daemon Integritaetscheck
+SECURITY_PERSISTENCE_AUDIT=true        # LaunchAgent/Daemon integrity check
 SECURITY_TCC_AUDIT=true                # Datenschutz-Berechtigungen checking
 
 # Docker + LaunchAgent Defaults
@@ -332,10 +332,10 @@ release_lock() {
     rm -f "$LOCKFILE" 2>/dev/null
 }
 
-# Fix #141: Ollama stoppen wenn von Meister startingd
+# Fix #141: Ollama stop if started by Meister
 shutdown_ollama() {
     if $OLLAMA_STARTED_BY_US; then
-        log INFO "Stopping Ollama (startingd by Meister)..."
+        log INFO "Stopping Ollama (started by Meister)..."
         pkill -f "ollama serve" 2>/dev/null
         # Kurz warten and checking ob stopped
         local w=0
@@ -356,7 +356,7 @@ shutdown_ollama() {
 cleanup() {
     if $INTERRUPTED; then return; fi
     INTERRUPTED=true
-    # Fix #141: Ollama stoppen bebefore wir aufraumen
+    # Fix #141: Ollama stop before we clean up
     shutdown_ollama 2>/dev/null
     # Bei Signal (not normalem Exit) Report fromgeben
     if [ -n "$CLEANUP_SIGNAL" ]; then
@@ -406,7 +406,7 @@ ensure_ollama_running() {
     if ollama_available; then
         log FIX "${context}Ollama server started (after ${wait_count}s)"
         OLLAMA_ENABLED=true
-        OLLAMA_STARTED_BY_US=true  # Fix #141: Merken dass wir Ollama startingd haben
+        OLLAMA_STARTED_BY_US=true  # Fix #141: Remember that we started Ollama
         return 0
     else
         log WARN "${context}Ollama server not responding after ${OLLAMA_STARTUP_WAIT}s"
@@ -1088,7 +1088,7 @@ module_git_repos() {
         local repo_dir=$(dirname "$gitdir")
         local repo_name=$(basename "$repo_dir")
 
-        # Fix #105/#115: timeout 5 before ALLE git-Commande (also "lokale" koennen auf iCloud-Repos haengen)
+        # Fix #105/#115: timeout 5 for all git commands (even local repos can hang on iCloud)
         # Fix #115: KEIN Pipe after timeout — head -1 frisst den Exit-Code 124
         local remote
         remote=$(timeout 5 git -C "$repo_dir" remote 2>/dev/null)
@@ -1351,7 +1351,7 @@ module_persistence_audit() {
                     "$HOME"/.*/*|"$HOME"/.*)
                         # Hidden path - only warn if not known
                         if ! echo "$program" | grep -qE "\.(claude|ollama|nvm|npm|cargo|rustup|docker)/"; then
-                            issues="${issues}Binary in verstecktem Folder; "
+                            issues="${issues}Binary in hidden folder; "
                         fi ;;
                 esac
             fi
@@ -1518,7 +1518,7 @@ module_security_suite() {
 # ── SYSTEM & CLEANUP ──
 
 module_system() {
-    log INFO "macOS System-Update Pruefung..."
+    log INFO "macOS system update check..."
     log STEP "   Checking softwareupdate..."
     local sysup=$(softwareupdate -l 2>&1)
 
@@ -1633,7 +1633,7 @@ module_deepclean() {
     log INFO "Deep Clean & System-Hygiene..."
     local total_freed=0
 
-    # Fix #54: System-Logs aufraumen
+    # Fix #54: Clean up system logs
     log STEP "   [1/14] System-Logs..."
     local user_log_size=$(du -sm "$HOME/Library/Logs" 2>/dev/null | awk '{print $1}')
     [ -z "$user_log_size" ] && user_log_size=0
@@ -1711,7 +1711,7 @@ module_deepclean() {
     if [ "$orphan_count" -gt 0 ]; then
         log INFO "   ${orphan_count} orphaned Preferences found"
         if $SELFHEAL_ORPHAN_PREFS && ! $DRY_RUN; then
-            # Backup erstellen
+            # Create backup
             local backup_dir="$MEISTER_DIR/backups/prefs_$(date +%Y%m%d)"
             mkdir -p "$backup_dir"
             local deleted=0
@@ -1748,7 +1748,7 @@ module_deepclean() {
         log STEP "   All Plists OK"
     fi
 
-    # Fix #59: Screenshots aufraumen (Desktop + Schreibtisch, >30 Tage)
+    # Fix #59: Clean up screenshots (Desktop, >30 days)
     log STEP "   [5/14] Alte Screenshots..."
     local screenshot_count=0
     local screenshot_mb=0
@@ -2012,7 +2012,7 @@ module_spotlight_fix() {
         return 0
     fi
 
-    log INFO "Spotlight Diagnosis & Repair..."
+    log INFO "Spotlight diagnosis & repair..."
     local fixes=0
 
     # ── [1/5] mds/mds_stores CPU-Verbralso ──
@@ -2022,12 +2022,12 @@ module_spotlight_fix() {
     local mds_total=$((mds_cpu + mds_stores_cpu))
 
     if [ "$mds_total" -gt "$SPOTLIGHT_MDS_CPU_THRESHOLD" ]; then
-        log WARN "   mds CPU: ${mds_total}% (mds:${mds_cpu}% mds_stores:${mds_stores_cpu}%) > Schwelle ${SPOTLIGHT_MDS_CPU_THRESHOLD}%"
+        log WARN "   mds CPU: ${mds_total}% (mds:${mds_cpu}% mds_stores:${mds_stores_cpu}%) > threshold ${SPOTLIGHT_MDS_CPU_THRESHOLD}%"
 
         # Checkingn ob Spotlight gerade aktiv indexiert
         local indexing_status=$(mdutil -s / 2>/dev/null)
         if echo "$indexing_status" | grep -qi "Indexing enabled"; then
-            # Feststellen ob normal indexing or Haenger
+            # Determine if normal indexing or stuck
             local mds_pid=$(pgrep -x mds 2>/dev/null | head -1)
             if [ -n "$mds_pid" ]; then
                 local mds_state=$(ps -p "$mds_pid" -o state= 2>/dev/null)
@@ -2036,7 +2036,7 @@ module_spotlight_fix() {
                     # CPU only hoch weil Indexing aktiv, no Restart needed
                     log INFO "   Spotlight indexiert gerade aktiv (CPU: ${mds_total}%)"
                 else
-                    log WARN "   mds scheint zu haengen (State: ${mds_state:-?})"
+                    log WARN "   mds appears stuck (State: ${mds_state:-?})"
                     if $NEEDS_SUDO; then
                         log FIX "   Restarting mds..."
                         run_or_dry sudo killall mds 2>/dev/null
@@ -2081,7 +2081,7 @@ module_spotlight_fix() {
                 log INFO "   Spotlight-Index with errors: $vol"
             fi
         elif echo "$vol_status" | grep -qi "disabled"; then
-            # Nur warnen for Root-Volume, andere koennen gewollt disabled sein
+            # Only warn for root volume, others may be intentionally disabled
             if [ "$vol" = "/" ]; then
                 log WARN "   /: Spotlight disabled auf Root-Volume!"
                 if $NEEDS_SUDO; then
@@ -2093,14 +2093,14 @@ module_spotlight_fix() {
                     log INFO "   Spotlight auf / disabled (sudo for Aktivieren)"
                 fi
             else
-                log STEP "   $vol: Spotlight disabled (gewollt?)"
+                log STEP "   $vol: Spotlight disabled (intentional?)"
             fi
         fi
     done < <(df -Hl 2>/dev/null | awk 'NR>1 && $NF ~ /^\// {print $NF}')
     log STEP "   ${volumes_checked} user volumes checked, ${volumes_broken} with errors"
 
-    # ── [3/5] Spotlight-Datenbank Integritaet ──
-    log STEP "   [3/5] Spotlight-DB Integritaet..."
+    # ── [3/5] Spotlight database integrity ──
+    log STEP "   [3/5] Spotlight DB integrity..."
     local spotlight_db="/.Spotlight-V100"
     if [ -d "$spotlight_db" ]; then
         local db_size=$(du -sm "$spotlight_db" 2>/dev/null | awk '{print $1}')
@@ -2161,8 +2161,8 @@ module_spotlight_fix() {
 
     # Summary
     if [ "$fixes" -gt 0 ]; then
-        log FIX "   Spotlight: ${fixes} Repairen durchgefuehrt"
-        report_add FIX "Spotlight Fix: ${fixes} Repairen"
+        log FIX "   Spotlight: ${fixes} repairs performed"
+        report_add FIX "Spotlight Fix: ${fixes} repairs"
     else
         log INFO "   Spotlight: alls OK"
         report_add SUCCESS "Spotlight: healthy"
@@ -2179,14 +2179,14 @@ module_icloud_fix() {
         return 0
     fi
 
-    log INFO "iCloud Sync Diagnosis & Repair..."
+    log INFO "iCloud sync diagnosis & repair..."
     local fixes=0
     local warns=0
     local icloud_dir="$HOME/Library/Mobile Documents/com~apple~CloudDocs"
 
-    # ── [1/6] Geister-Folder in HOME entfernen ──
+    # ── [1/6] Ghost folders in HOME ──
     if $ICLOUD_GHOST_DIRS_CLEAN; then
-        log STEP "   [1/6] Geister-Folder in HOME..."
+        log STEP "   [1/6] Ghost folders in HOME..."
         local ghost_count=0
         local ghost_list=""
         # Bekannte Folder die in HOME NICHT sein sollten (leere iCloud-Ghosts)
@@ -2206,24 +2206,24 @@ module_icloud_fix() {
             if [ -z "$content_count" ]; then
                 ghost_count=$((ghost_count + 1))
                 ghost_list="${ghost_list}${dirname} "
-                log WARN "     Geister-Folder: ~/${dirname}"
+                log WARN "     Ghost folder: ~/${dirname}"
                 run_or_dry rmdir "$dir" 2>/dev/null || run_or_dry rm -rf "$dir" 2>/dev/null
             fi
         done < <(find "$HOME" -maxdepth 1 -type d -mindepth 1 2>/dev/null)
         if [ "$ghost_count" -gt 0 ]; then
-            log FIX "   ${ghost_count} Geister-Folder removed: ${ghost_list}"
-            report_add FIX "iCloud: ${ghost_count} Geister-Folder removed (${ghost_list})"
+            log FIX "   ${ghost_count} ghost folders removed: ${ghost_list}"
+            report_add FIX "iCloud: ${ghost_count} ghost folders removed (${ghost_list})"
             fixes=$((fixes + 1))
         else
-            log STEP "   No Geister-Folder"
+            log STEP "   No ghost folders"
         fi
     else
-        log STEP "   [1/6] Geister-Folder: skipped (Config)"
+        log STEP "   [1/6] Ghost folders: skipped (Config)"
     fi
 
-    # ── [2/6] Corrupt iCloud-Stubs erkennen ──
+    # ── [2/6] Detect corrupt iCloud stubs ──
     if $ICLOUD_STUBS_SCAN; then
-        log STEP "   [2/6] Corrupt iCloud-Stubs..."
+        log STEP "   [2/6] Corrupt iCloud stubs..."
         local stub_count=0
         # Scan-Pfade: Documents, Desktop, iCloud Drive
         local scan_paths="$HOME/Documents $HOME/Desktop"
@@ -2301,7 +2301,7 @@ module_icloud_fix() {
     fi
 
     # ── [4/6] iCloud Drive Storage ──
-    # Fix #139: Timeout for du/find auf iCloud (fileproviderd kann haengen)
+    # Fix #139: Timeout for du/find on iCloud (fileproviderd can hang)
     log STEP "   [4/6] iCloud Drive Storage..."
     if [ -d "$icloud_dir" ]; then
         local icloud_size=$(timeout 10 du -sm "$icloud_dir" 2>/dev/null | awk '{print $1}')
@@ -2408,7 +2408,7 @@ module_icloud_fix() {
         local sync_disabled_count=$(echo "$clean_sync" | grep -c "SYNC DISABLED" 2>/dev/null || echo 0)
 
         if [ "${needs_sync_count:-0}" -gt 5 ]; then
-            log WARN "   ${needs_sync_count} Container warten auf Sync"
+            log WARN "   ${needs_sync_count} containers waiting for sync"
             if $ICLOUD_RESTART_BIRD && [ "${needs_sync_count:-0}" -gt 20 ]; then
                 log FIX "   Viele wartende Syncs - starting bird neu..."
                 run_or_dry killall bird 2>/dev/null
@@ -2416,7 +2416,7 @@ module_icloud_fix() {
                 report_add FIX "iCloud: bird restarted (${needs_sync_count} pending syncs)"
                 fixes=$((fixes + 1))
             else
-                log INFO "   iCloud: ${needs_sync_count} Container warten auf Sync"
+                log INFO "   iCloud: ${needs_sync_count} containers waiting for sync"
                 warns=$((warns + 1))
             fi
         else
@@ -2432,9 +2432,9 @@ module_icloud_fix() {
 
     # Summary
     if [ "$fixes" -gt 0 ]; then
-        log FIX "   iCloud: ${fixes} Repairen, ${warns} Warningen"
+        log FIX "   iCloud: ${fixes} repairs, ${warns} warnings"
     elif [ "$warns" -gt 0 ]; then
-        log WARN "   iCloud: ${warns} Warningen"
+        log WARN "   iCloud: ${warns} warnings"
     else
         log INFO "   iCloud: alls OK"
         report_add SUCCESS "iCloud Sync: healthy"
@@ -2627,7 +2627,7 @@ module_performance() {
                     log STEP "     Behalten: $model"
                 fi
             done
-            # Wenn Ollama only temporaer startingd, wieder stoppen
+            # If Ollama was only temporarily started, stop it again
             if ! $ollama_was_running; then
                 pkill ollama 2>/dev/null
                 log STEP "     Ollama-Server wieder stopped (RAM freegegeben)"
@@ -2645,8 +2645,8 @@ module_performance() {
     fi
 
     # ── Summary ──
-    log INFO "   Performance: ${perf_fixes} Optimizationen, ${perf_warns} Recommendationen"
-    [ "$perf_fixes" -gt 0 ] && report_add FIX "Performance: ${perf_fixes} Optimizationen angewendet"
+    log INFO "   Performance: ${perf_fixes} optimizations, ${perf_warns} recommendations"
+    [ "$perf_fixes" -gt 0 ] && report_add FIX "Performance: ${perf_fixes} optimizations applied"
     [ "$perf_warns" -gt 0 ] && log INFO "   ${perf_warns} Recommendationen skipped (brauchen sudo/Config)"
     return 0
 }
@@ -2690,7 +2690,7 @@ selfheal_preflight() {
         rm -rf "$HOME/Library/Caches"/* 2>/dev/null
         report_add FIX "Notfall-Cleanup at ${disk_pct}% Disk"
     elif [ "$disk_pct" -gt "$DISK_USAGE_THRESHOLD" ] 2>/dev/null; then
-        log WARN "   Disk ${disk_pct}% used (Schwelle: ${DISK_USAGE_THRESHOLD}%)"
+        log WARN "   Disk ${disk_pct}% used (threshold: ${DISK_USAGE_THRESHOLD}%)"
     else
         log STEP "   Disk OK (${disk_pct}%)"
     fi
@@ -2703,7 +2703,7 @@ selfheal_preflight() {
 #############################
 
 BENCHMARK_DIR="$MEISTER_DIR/benchmarks"
-BENCHMARK_INTERVAL=86400  # 24h in Sekunden
+BENCHMARK_INTERVAL=86400  # 24h in seconds
 mkdir -p "$BENCHMARK_DIR" 2>/dev/null
 
 benchmark_should_run() {
@@ -2715,7 +2715,7 @@ benchmark_should_run() {
 }
 
 # Fix #106: date +%s%N funktioniert not auf macOS (gibt "N" instead of Nanosekunden)
-# → perl or gdate for Millisekunden-Praezision
+# → perl or gdate for millisecond precision
 _epoch_ms() {
     if command_exists gdate; then
         gdate +%s%N | cut -c1-13
@@ -2727,7 +2727,7 @@ _epoch_ms() {
 }
 
 benchmark_cpu() {
-    # Single-Core: Pi-Berechnung via bc (1000 Stellen)
+    # Single-core: Pi calculation via bc (1000 digits)
     local start=$(_epoch_ms)
     echo "scale=1000; 4*a(1)" | bc -l > /dev/null 2>&1
     local end=$(_epoch_ms)
@@ -2983,7 +2983,7 @@ benchmark_compare() {
 module_benchmark() {
     if ! benchmark_should_run; then
         log INFO "Benchmark: Already ran today - skipping"
-        log STEP "   Next Benchmark in ~$((BENCHMARK_INTERVAL - ($(date +%s) - $(cat "$BENCHMARK_DIR/last_run" 2>/dev/null || echo 0)))) Sekunden"
+        log STEP "   Next Benchmark in ~$((BENCHMARK_INTERVAL - ($(date +%s) - $(cat "$BENCHMARK_DIR/last_run" 2>/dev/null || echo 0)))) seconds"
         report_add SUCCESS "Benchmark: skip (already heute)"
         return
     fi
@@ -2994,7 +2994,7 @@ module_benchmark() {
     local ts=$(date +'%Y-%m-%d %H:%M:%S')
 
     # 1. CPU Benchmark
-    log STEP "   CPU-Benchmark (Pi 1000 Stellen)..."
+    log STEP "   CPU benchmark (Pi 1000 digits)..."
     local cpu_ms=$(benchmark_cpu)
     log STEP "   CPU: ${cpu_ms}ms"
 
@@ -3082,7 +3082,7 @@ module_benchmark() {
     # 9. Timestamp speichern
     date +%s > "$BENCHMARK_DIR/last_run"
 
-    # 10. Alte Benchmarks aufraumen (>90 Tage)
+    # 10. Clean up old benchmarks (>90 days)
     find "$BENCHMARK_DIR" -name "*.json" -mtime +90 -delete 2>/dev/null
 
     report_add SUCCESS "Benchmark: CPU ${cpu_ms}ms, Disk W:${disk_w}/R:${disk_r} MB/s, Net ${net_dl} MB/s"
@@ -3542,7 +3542,7 @@ $DRY_RUN && echo "  ║   [DRY-RUN MODUS]                        ║"
 echo "  ╚══════════════════════════════════════════╝"
 echo -e "${NC}"
 
-log INFO "Meister v0.09 startingd ($(date))"
+log INFO "Meister v1.0 started ($(date))"
 $DRY_RUN && log WARN "DRY-RUN: No Changes werden vorgenommen"
 log STEP "   Logfile: $LOGFILE"
 [ -f "$MEISTER_CONFIG" ] && log STEP "   Config: $MEISTER_CONFIG loaded"
