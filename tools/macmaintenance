@@ -1,0 +1,186 @@
+#!/bin/bash
+
+# heal_macos.sh
+# A macOS "Self-Healing" & Maintenance Script
+#
+# Usage: sudo ./heal_macos.sh [options]
+# Options:
+#   --dry-run    Show what would happen without making changes.
+#   --help       Show this help message.
+
+set -e
+
+# --- Configuration ---
+LOG_FILE="/var/log/macos_healing.log"
+DATE=$(date "+%Y-%m-%d %H:%M:%S")
+DRY_RUN=false
+
+# --- Colors ---
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m' # No Color
+
+# --- Helper Functions ---
+
+log() {
+    echo -e "${BLUE}[${DATE}]${NC} $1"
+    if [ "$DRY_RUN" = false ]; then
+        echo "[${DATE}] $1" >> "$LOG_FILE"
+    fi
+}
+
+warn() {
+    echo -e "${YELLOW}[WARNING] $1${NC}"
+    if [ "$DRY_RUN" = false ]; then
+        echo "[WARNING] $1" >> "$LOG_FILE"
+    fi
+}
+
+error() {
+    echo -e "${RED}[ERROR] $1${NC}"
+    if [ "$DRY_RUN" = false ]; then
+        echo "[ERROR] $1" >> "$LOG_FILE"
+    fi
+}
+
+check_root() {
+    if [ "$EUID" -ne 0 ]; then
+        error "Please run as root (sudo ./heal_macos.sh)"
+        exit 1
+    fi
+}
+
+# --- Maintenance Tasks ---
+
+task_verify_disk() {
+    log "Verifying startup volume..."
+    if [ "$DRY_RUN" = true ]; then
+        echo "  [Dry Run] Would run: diskutil verifyVolume /"
+    else
+        diskutil verifyVolume / || warn "Disk verification reported issues. You may need to boot into Recovery Mode to repair."
+    fi
+}
+
+task_flush_dns() {
+    log "Flushing DNS cache..."
+    if [ "$DRY_RUN" = true ]; then
+        echo "  [Dry Run] Would run: dscacheutil -flushcache; killall -HUP mDNSResponder"
+    else
+        dscacheutil -flushcache
+        killall -HUP mDNSResponder
+        log "DNS cache flushed."
+    fi
+}
+
+task_clean_system_caches() {
+    log "Cleaning System Caches..."
+    local cache_dir="/Library/Caches"
+    
+    if [ -d "$cache_dir" ]; then
+        if [ "$DRY_RUN" = true ]; then
+            echo "  [Dry Run] Would delete contents of: $cache_dir"
+        else
+            # Delete contents, but not the directory itself
+            rm -rf "$cache_dir"/*
+            log "System caches cleared."
+        fi
+    else
+        warn "System cache directory not found: $cache_dir"
+    fi
+}
+
+task_clean_user_caches() {
+    log "Cleaning User Caches..."
+    # Loop through all users in /Users (excluding Shared)
+    for user_dir in /Users/*; do
+        local user_name=$(basename "$user_dir")
+        if [ "$user_name" != "Shared" ] && [ -d "$user_dir/Library/Caches" ]; then
+            if [ "$DRY_RUN" = true ]; then
+                echo "  [Dry Run] Would clean caches for user: $user_name"
+            else
+                rm -rf "$user_dir/Library/Caches"/*
+                log "Caches cleared for user: $user_name"
+            fi
+        fi
+    done
+}
+
+task_reset_launch_services() {
+    log "Resetting Launch Services database..."
+    local ls_cmd="/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister"
+    
+    if [ "$DRY_RUN" = true ]; then
+        echo "  [Dry Run] Would run: $ls_cmd -kill -r -domain local -domain system -domain user"
+    else
+        if [ -x "$ls_cmd" ]; then
+            "$ls_cmd" -kill -r -domain local -domain system -domain user
+            log "Launch Services reset."
+        else
+            warn "lsregister command not found."
+        fi
+    fi
+}
+
+task_purge_memory() {
+    log "Purging inactive memory..."
+    if [ "$DRY_RUN" = true ]; then
+        echo "  [Dry Run] Would run: purge"
+    else
+        purge || warn "Failed to purge memory."
+    fi
+}
+
+task_homebrew_maintenance() {
+    if command -v brew &> /dev/null; then
+        log "Homebrew detected. Running maintenance..."
+        if [ "$DRY_RUN" = true ]; then
+            echo "  [Dry Run] Would run: brew cleanup"
+        else
+            # We need to run brew as the owning user, not root, usually.
+            # But since we are root, we might skip this or try to find the real user.
+            # For simplicity in this system script, we'll skip if we can't easily determine the user,
+            # or just warn.
+            warn "Skipping Homebrew cleanup (should be run as normal user)."
+        fi
+    fi
+}
+
+# --- Main Execution ---
+
+# Parse Arguments
+while [[ "$#" -gt 0 ]]; do
+    case $1 in
+        --dry-run) DRY_RUN=true ;;
+        --help)
+            echo "Usage: sudo ./heal_macos.sh [options]"
+            echo "Options:"
+            echo "  --dry-run    Show what would happen without making changes."
+            exit 0
+            ;;
+        *) echo "Unknown parameter passed: $1"; exit 1 ;;
+    esac
+    shift
+done
+
+check_root
+
+echo -e "${GREEN}Starting macOS Self-Healing Script...${NC}"
+if [ "$DRY_RUN" = true ]; then
+    echo -e "${YELLOW}*** DRY RUN MODE: No changes will be made ***${NC}"
+fi
+
+# Execute Tasks
+task_verify_disk
+task_flush_dns
+task_clean_system_caches
+task_clean_user_caches
+task_reset_launch_services
+task_purge_memory
+task_homebrew_maintenance
+
+echo -e "${GREEN}Maintenance complete!${NC}"
+if [ "$DRY_RUN" = false ]; then
+    echo "Log saved to: $LOG_FILE"
+fi
