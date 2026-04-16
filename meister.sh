@@ -4,7 +4,7 @@
 # meister.sh
 #
 # Meister - macOS Maintenance, Update & Self-Healing
-# Version: 2.3
+# Version: 2.4
 # Date: 2026-04-10
 #
 # NEW in v1.1:
@@ -3521,6 +3521,75 @@ if [ -n "$_MEISTER_DOTFILES_SCRIPT" ]; then
     esac
 fi
 
+# ── Live Network Monitor (meister sniff) ──
+if [ "${1:-}" = "sniff" ]; then
+    INTERVAL="${2:-3}"
+    IFACE=$(route -n get default 2>/dev/null | awk '/interface:/{print $2}')
+    [ -z "$IFACE" ] && echo "No active interface" && exit 1
+    IP=$(ipconfig getifaddr "$IFACE" 2>/dev/null || echo "n/a")
+    trap 'tput cnorm; echo; exit 0' INT TERM
+
+    tput civis
+    while true; do
+        # Bandwidth sample
+        local_s1=$(netstat -I "$IFACE" -b 2>/dev/null | awk 'NR==2{print $7, $10}')
+        sleep "$INTERVAL"
+        local_s2=$(netstat -I "$IFACE" -b 2>/dev/null | awk 'NR==2{print $7, $10}')
+        in1=$(echo "$local_s1" | awk '{print $1}') out1=$(echo "$local_s1" | awk '{print $2}')
+        in2=$(echo "$local_s2" | awk '{print $1}') out2=$(echo "$local_s2" | awk '{print $2}')
+        in_kb=$(( (in2 - in1) / INTERVAL / 1024 ))
+        out_kb=$(( (out2 - out1) / INTERVAL / 1024 ))
+
+        # Connections
+        established=$(netstat -an 2>/dev/null | grep -c ESTABLISHED)
+        listening=$(netstat -an 2>/dev/null | grep -c LISTEN)
+
+        # Top 10 processes by connection count
+        top_procs=$(lsof -i -nP 2>/dev/null | awk 'NR>1{print $1}' | sort | uniq -c | sort -rn | head -10)
+
+        # Top remote hosts
+        top_hosts=$(lsof -i -nP 2>/dev/null | awk 'NR>1 && /ESTABLISHED/' | \
+            grep -oE '>[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+' | sed 's/>//' | sort | uniq -c | sort -rn | head -8)
+
+        clear
+        printf '\033[1;34m'
+        printf '  ╔══════════════════════════════════════════════════╗\n'
+        printf '  ║  MEISTER SNIFF — Live Network Monitor           ║\n'
+        printf '  ║  %s (%s)  Refresh: %ss               ║\n' "$IFACE" "$IP" "$INTERVAL"
+        printf '  ╚══════════════════════════════════════════════════╝\n'
+        printf '\033[0m\n'
+
+        printf '\033[1m  Bandwidth\033[0m\n'
+        printf '  ↓ IN:  %s KB/s    ↑ OUT: %s KB/s\n\n' "$in_kb" "$out_kb"
+
+        printf '\033[1m  Connections\033[0m\n'
+        printf '  Established: %s    Listening: %s\n\n' "$established" "$listening"
+
+        printf '\033[1m  Top Processes (connections)\033[0m\n'
+        if [ -n "$top_procs" ]; then
+            printf '  %6s  %s\n' "COUNT" "PROCESS"
+            echo "$top_procs" | while IFS= read -r line; do
+                cnt=$(echo "$line" | awk '{print $1}')
+                name=$(echo "$line" | awk '{print $2}')
+                printf '  %6s  %s\n' "$cnt" "$name"
+            done
+        fi
+        printf '\n'
+
+        printf '\033[1m  Top Remote Hosts\033[0m\n'
+        if [ -n "$top_hosts" ]; then
+            printf '  %6s  %s\n' "COUNT" "HOST"
+            echo "$top_hosts" | while IFS= read -r line; do
+                cnt=$(echo "$line" | awk '{print $1}')
+                host=$(echo "$line" | awk '{print $2}')
+                printf '  %6s  %s\n' "$cnt" "$host"
+            done
+        fi
+
+        printf '\n\033[2m  Ctrl+C to exit\033[0m\n'
+    done
+fi
+
 # Fix #117: Long-Options before getopts abfangen (getopts kann only Short-Options)
 for arg in "$@"; do
     case "$arg" in
@@ -3564,6 +3633,10 @@ MAINTENANCE:
   OVERRIDES:  -X Xcode  -T Trash  -S Sudo  -C Caches
               -L Large files  -P Performance  -G Git
               -N Sniffnet (network monitor)
+
+NETWORK:
+  meister sniff        Live network monitor (Ctrl+C to exit)
+  meister sniff 5      Custom refresh interval (default: 3s)
 
 DOTFILES SYNC:
   meister push         Collect configs, commit, push
