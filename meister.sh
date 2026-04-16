@@ -4,7 +4,7 @@
 # meister.sh
 #
 # Meister - macOS Maintenance, Update & Self-Healing
-# Version: 4.0
+# Version: 4.1
 # Date: 2026-04-10
 #
 # NEW in v1.1:
