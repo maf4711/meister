@@ -4,7 +4,7 @@
 # meister.sh
 #
 # Meister - macOS Maintenance, Update & Self-Healing
-# Version: 2.5
+# Version: 3.0
 # Date: 2026-04-10
 #
 # NEW in v1.1:
@@ -3602,6 +3602,482 @@ if [ "${1:-}" = "sniff" ]; then
     done
 fi
 
+# ── Disk Analyzer (meister disk) ──
+if [ "${1:-}" = "disk" ]; then
+    TARGET="${2:-$HOME}"
+    echo -e "\033[1;34m  MEISTER DISK — Top Space Usage: $TARGET\033[0m"
+    echo ""
+    printf '  %10s  %s\n' "SIZE" "DIRECTORY"
+    printf '  %10s  %s\n' "----" "---------"
+    du -d 1 -h "$TARGET" 2>/dev/null | sort -rh | head -25 | while IFS=$'\t' read -r size dir; do
+        [ "$dir" = "$TARGET" ] && continue
+        name="${dir#$TARGET/}"
+        bar_len=$(echo "$size" | awk '{
+            s=$1; u=substr(s,length(s));
+            n=substr(s,1,length(s)-1)+0;
+            if(u=="G") n=n*1024; else if(u=="M") n=n; else if(u=="K") n=n/1024; else n=0;
+            l=int(n/100); if(l>40) l=40; if(l<1 && n>0) l=1; print l
+        }')
+        bar=$(printf '%*s' "$bar_len" '' | tr ' ' '█')
+        printf '  %10s  %-30s %s\n' "$size" "$name" "$bar"
+    done
+    echo ""
+    df -h "$TARGET" 2>/dev/null | awk 'NR==2{printf "  Disk: %s used of %s (%s)\n", $3, $2, $5}'
+    exit 0
+fi
+
+# ── Port Scanner (meister ports) ──
+if [ "${1:-}" = "ports" ]; then
+    echo -e "\033[1;34m  MEISTER PORTS — Open Ports & Listeners\033[0m"
+    echo ""
+    printf '  \033[1m%7s  %-6s  %-15s  %s\033[0m\n' "PORT" "PROTO" "PROCESS" "PID"
+    printf '  %7s  %-6s  %-15s  %s\n' "------" "-----" "----------" "---"
+    lsof -i -nP 2>/dev/null | awk 'NR>1 && /LISTEN/' | \
+        awk '{split($9,a,":"); port=a[length(a)]; print port, $1, $2, $5}' | \
+        sort -t' ' -k1 -n -u | while read -r port proc pid proto; do
+            known=""
+            case "$port" in
+                22) known="SSH" ;; 53) known="DNS" ;; 80) known="HTTP" ;;
+                443) known="HTTPS" ;; 3000) known="Dev" ;; 5432) known="Postgres" ;;
+                6379) known="Redis" ;; 8080) known="HTTP-Alt" ;; 3306) known="MySQL" ;;
+                27017) known="MongoDB" ;;
+            esac
+            [ -n "$known" ] && proc="$proc ($known)"
+            printf '  %7s  %-6s  %-15s  %s\n' "$port" "$proto" "$proc" "$pid"
+        done
+    echo ""
+    total=$(netstat -an 2>/dev/null | grep -c LISTEN)
+    echo "  Total listening: $total"
+    exit 0
+fi
+
+# ── DNS Leak Test (meister dns) ──
+if [ "${1:-}" = "dns" ]; then
+    echo -e "\033[1;34m  MEISTER DNS — DNS Leak Test\033[0m"
+    echo ""
+    # Current DNS servers
+    echo -e "  \033[1mConfigured DNS Servers\033[0m"
+    scutil --dns 2>/dev/null | awk '/nameserver\[/{print "  " $3}' | sort -u
+    echo ""
+
+    # System resolver
+    echo -e "  \033[1mResolver Test\033[0m"
+    for domain in apple.com google.com cloudflare.com github.com; do
+        ip=$(dig +short "$domain" A 2>/dev/null | head -1)
+        ms=$(dig "$domain" 2>/dev/null | awk '/Query time/{print $4}')
+        if [ -n "$ip" ]; then
+            printf '  \033[0;32m✓\033[0m %-20s → %-16s (%s ms)\n' "$domain" "$ip" "${ms:-?}"
+        else
+            printf '  \033[0;31m✗\033[0m %-20s → FAILED\n' "$domain"
+        fi
+    done
+    echo ""
+
+    # VPN leak check
+    echo -e "  \033[1mVPN Leak Check\033[0m"
+    default_if=$(route -n get default 2>/dev/null | awk '/interface:/{print $2}')
+    if [[ "$default_if" == utun* ]]; then
+        echo -e "  \033[0;32m✓\033[0m Default route via VPN ($default_if)"
+        # Check if DNS goes through VPN
+        dns_server=$(scutil --dns 2>/dev/null | awk '/nameserver\[/{print $3; exit}')
+        if [[ "$dns_server" == 10.* ]] || [[ "$dns_server" == 100.* ]] || [[ "$dns_server" == 172.16.* ]]; then
+            echo -e "  \033[0;32m✓\033[0m DNS via private range ($dns_server) — no leak"
+        else
+            echo -e "  \033[1;33m⚠\033[0m DNS server is public ($dns_server) — possible leak"
+        fi
+    else
+        echo "  No VPN detected (default route: $default_if)"
+    fi
+
+    # External IP
+    echo ""
+    echo -e "  \033[1mExternal IP\033[0m"
+    ext_ip=$(curl -s --max-time 5 https://ifconfig.me 2>/dev/null || echo "timeout")
+    echo "  $ext_ip"
+    exit 0
+fi
+
+# ── Battery Health (meister battery) ──
+if [ "${1:-}" = "battery" ]; then
+    echo -e "\033[1;34m  MEISTER BATTERY — Battery Health\033[0m"
+    echo ""
+    if ! system_profiler SPPowerDataType &>/dev/null; then
+        echo "  No battery (desktop Mac)"
+        exit 0
+    fi
+    batt_info=$(system_profiler SPPowerDataType 2>/dev/null)
+    cycle=$(echo "$batt_info" | awk -F': ' '/Cycle Count/{print $2}')
+    condition=$(echo "$batt_info" | awk -F': ' '/Condition/{print $2}')
+    max_cap=$(echo "$batt_info" | awk -F': ' '/Maximum Capacity/{print $2}')
+    charging=$(echo "$batt_info" | awk -F': ' '/Charging/{print $2}' | head -1)
+    connected=$(echo "$batt_info" | awk -F': ' '/Connected/{print $2}' | head -1)
+    pct=$(pmset -g batt 2>/dev/null | grep -oE '[0-9]+%' | head -1)
+    remaining=$(pmset -g batt 2>/dev/null | grep -oE '[0-9]+:[0-9]+' | head -1)
+    temp=$(ioreg -r -n AppleSmartBattery 2>/dev/null | awk '/Temperature/{printf "%.1f", $3/100; exit}')
+
+    echo -e "  \033[1mStatus\033[0m"
+    echo "  Charge:       ${pct:-n/a}"
+    [ -n "$remaining" ] && echo "  Remaining:    $remaining"
+    echo "  Connected:    ${connected:-n/a}"
+    echo "  Charging:     ${charging:-n/a}"
+    echo ""
+    echo -e "  \033[1mHealth\033[0m"
+    echo "  Max Capacity: ${max_cap:-n/a}"
+    echo "  Cycle Count:  ${cycle:-n/a}"
+    echo "  Condition:    ${condition:-n/a}"
+    [ -n "$temp" ] && echo "  Temperature:  ${temp}°C"
+    echo ""
+
+    # Health assessment
+    if [ -n "$cycle" ]; then
+        cyc_num=${cycle//[^0-9]/}
+        if [ "$cyc_num" -lt 300 ]; then
+            echo -e "  \033[0;32m✓ Battery excellent ($cyc_num cycles)\033[0m"
+        elif [ "$cyc_num" -lt 700 ]; then
+            echo -e "  \033[1;33m⚠ Battery good ($cyc_num cycles)\033[0m"
+        else
+            echo -e "  \033[0;31m✗ Battery degraded ($cyc_num cycles — consider replacement)\033[0m"
+        fi
+    fi
+    exit 0
+fi
+
+# ── Startup Audit (meister startup) ──
+if [ "${1:-}" = "startup" ]; then
+    echo -e "\033[1;34m  MEISTER STARTUP — Login Items & Launch Agents\033[0m"
+    echo ""
+
+    echo -e "  \033[1mLogin Items (User)\033[0m"
+    osascript -e 'tell application "System Events" to get the name of every login item' 2>/dev/null | \
+        tr ',' '\n' | sed 's/^ */  /' || echo "  (none or access denied)"
+    echo ""
+
+    echo -e "  \033[1mUser LaunchAgents (~\/Library\/LaunchAgents)\033[0m"
+    ls ~/Library/LaunchAgents/*.plist 2>/dev/null | while read -r plist; do
+        name=$(basename "$plist" .plist)
+        loaded=$(launchctl list 2>/dev/null | grep -c "$name")
+        if [ "$loaded" -gt 0 ]; then
+            printf '  \033[0;32m●\033[0m %s\n' "$name"
+        else
+            printf '  \033[2m○\033[0m %s (not loaded)\n' "$name"
+        fi
+    done
+    [ -z "$(ls ~/Library/LaunchAgents/*.plist 2>/dev/null)" ] && echo "  (none)"
+    echo ""
+
+    echo -e "  \033[1mSystem LaunchAgents (\/Library\/LaunchAgents)\033[0m"
+    ls /Library/LaunchAgents/*.plist 2>/dev/null | while read -r plist; do
+        name=$(basename "$plist" .plist)
+        # Flag non-Apple
+        if [[ "$name" != com.apple.* ]]; then
+            printf '  \033[1;33m●\033[0m %s (third-party)\n' "$name"
+        else
+            printf '  \033[2m●\033[0m %s\n' "$name"
+        fi
+    done
+    [ -z "$(ls /Library/LaunchAgents/*.plist 2>/dev/null)" ] && echo "  (none)"
+    echo ""
+
+    echo -e "  \033[1mSystem LaunchDaemons (\/Library\/LaunchDaemons) — third-party only\033[0m"
+    ls /Library/LaunchDaemons/*.plist 2>/dev/null | while read -r plist; do
+        name=$(basename "$plist" .plist)
+        [[ "$name" == com.apple.* ]] && continue
+        printf '  \033[1;33m●\033[0m %s\n' "$name"
+    done
+    echo ""
+
+    total_user=$(ls ~/Library/LaunchAgents/*.plist 2>/dev/null | wc -l | tr -d ' ')
+    total_sys=$(ls /Library/LaunchAgents/*.plist /Library/LaunchDaemons/*.plist 2>/dev/null | grep -cv 'com.apple' || echo 0)
+    echo "  Summary: $total_user user agents, $total_sys third-party system agents/daemons"
+    exit 0
+fi
+
+# ── Wi-Fi Diagnostics (meister wifi) ──
+if [ "${1:-}" = "wifi" ]; then
+    echo -e "\033[1;34m  MEISTER WIFI — Wi-Fi Diagnostics\033[0m"
+    echo ""
+    AIRPORT="/System/Library/PrivateFrameworks/Apple80211.framework/Versions/Current/Resources/airport"
+    if [ ! -x "$AIRPORT" ]; then
+        echo "  airport CLI not found — using system_profiler"
+        system_profiler SPAirPortDataType 2>/dev/null | head -40
+        exit 0
+    fi
+
+    info=$("$AIRPORT" -I 2>/dev/null)
+    ssid=$(echo "$info" | awk '/ SSID:/{print $2}')
+    bssid=$(echo "$info" | awk '/BSSID:/{print $2}')
+    rssi=$(echo "$info" | awk '/agrCtlRSSI:/{print $2}')
+    noise=$(echo "$info" | awk '/agrCtlNoise:/{print $2}')
+    channel=$(echo "$info" | awk '/channel:/{print $2}')
+    tx_rate=$(echo "$info" | awk '/lastTxRate:/{print $2}')
+    mcs=$(echo "$info" | awk '/MCS:/{print $2}')
+    security=$(echo "$info" | awk '/link auth:/{print $2}')
+
+    snr=$((rssi - noise))
+
+    echo -e "  \033[1mConnection\033[0m"
+    echo "  SSID:       ${ssid:-n/a}"
+    echo "  BSSID:      ${bssid:-n/a}"
+    echo "  Channel:    ${channel:-n/a}"
+    echo "  TX Rate:    ${tx_rate:-n/a} Mbps"
+    echo "  MCS Index:  ${mcs:-n/a}"
+    echo "  Security:   ${security:-n/a}"
+    echo ""
+
+    echo -e "  \033[1mSignal Quality\033[0m"
+    echo "  RSSI:       ${rssi:-n/a} dBm"
+    echo "  Noise:      ${noise:-n/a} dBm"
+    echo "  SNR:        ${snr} dB"
+    if [ "$rssi" -ge -50 ] 2>/dev/null; then
+        echo -e "  Quality:    \033[0;32m████████████████████ Excellent\033[0m"
+    elif [ "$rssi" -ge -60 ] 2>/dev/null; then
+        echo -e "  Quality:    \033[0;32m███████████████░░░░░ Good\033[0m"
+    elif [ "$rssi" -ge -70 ] 2>/dev/null; then
+        echo -e "  Quality:    \033[1;33m██████████░░░░░░░░░░ Fair\033[0m"
+    elif [ "$rssi" -ge -80 ] 2>/dev/null; then
+        echo -e "  Quality:    \033[0;31m█████░░░░░░░░░░░░░░░ Weak\033[0m"
+    else
+        echo -e "  Quality:    \033[0;31m██░░░░░░░░░░░░░░░░░░ Very Weak\033[0m"
+    fi
+    echo ""
+
+    echo -e "  \033[1mChannel Scan (nearby networks)\033[0m"
+    printf '  %4s  %4s  %-30s\n' "CH" "RSSI" "SSID"
+    "$AIRPORT" -s 2>/dev/null | awk 'NR>1{printf "  %4s  %4s  %-30s\n", $4, $3, $1}' | sort -t' ' -k2 -n | head -15
+    exit 0
+fi
+
+# ── Process Monitor (meister top) ──
+if [ "${1:-}" = "top" ]; then
+    INTERVAL="${2:-3}"
+    trap 'tput cnorm; echo; exit 0' INT TERM
+    tput civis
+    while true; do
+        clear
+        printf '\033[1;34m'
+        printf '  ╔══════════════════════════════════════════════════╗\n'
+        printf '  ║  MEISTER TOP — Process Monitor                  ║\n'
+        printf '  ╚══════════════════════════════════════════════════╝\n'
+        printf '\033[0m\n'
+
+        # System overview
+        load=$(sysctl -n vm.loadavg 2>/dev/null | awk '{print $2, $3, $4}')
+        mem_press=$(memory_pressure 2>/dev/null | tail -1 || echo "n/a")
+        cpu_usage=$(ps -A -o %cpu | awk '{s+=$1} END {printf "%.0f", s}')
+        echo "  Load: $load  CPU: ${cpu_usage}%  $mem_press"
+        echo ""
+
+        # Top CPU
+        printf '  \033[1mTop CPU\033[0m\n'
+        printf '  %6s  %6s  %s\n' "%CPU" "%MEM" "PROCESS"
+        ps -Arco pid,%cpu,%mem,comm 2>/dev/null | head -11 | tail -10 | \
+            awk '{printf "  %6s  %6s  %s\n", $2, $3, $4}'
+        echo ""
+
+        # Top Memory
+        printf '  \033[1mTop Memory\033[0m\n'
+        printf '  %6s  %8s  %s\n' "%MEM" "RSS(MB)" "PROCESS"
+        ps -Amro pid,%mem,rss,comm 2>/dev/null | head -11 | tail -10 | \
+            awk '{printf "  %6s  %8.0f  %s\n", $2, $3/1024, $4}'
+        echo ""
+
+        # Energy (if available)
+        printf '  \033[1mTop Energy (AppNap)\033[0m\n'
+        ps -Aro pid,%cpu,comm 2>/dev/null | head -6 | tail -5 | \
+            awk '{if($2>1.0) printf "  \033[1;33m%6s%%\033[0m  %s\n", $2, $3; else printf "  %6s%%  %s\n", $2, $3}'
+
+        printf '\n\033[2m  Refresh: %ss  Ctrl+C to exit\033[0m\n' "$INTERVAL"
+        sleep "$INTERVAL"
+    done
+fi
+
+# ── Certificate Checker (meister certs) ──
+if [ "${1:-}" = "certs" ]; then
+    echo -e "\033[1;34m  MEISTER CERTS — Certificate Checker\033[0m"
+    echo ""
+
+    # Check remote hosts from args, or defaults
+    shift
+    if [ $# -eq 0 ]; then
+        hosts="github.com google.com apple.com localhost:443"
+    else
+        hosts="$*"
+    fi
+
+    echo -e "  \033[1mRemote Certificates\033[0m"
+    printf '  %-25s  %-12s  %-20s  %s\n' "HOST" "DAYS LEFT" "ISSUER" "STATUS"
+    printf '  %-25s  %-12s  %-20s  %s\n' "----" "---------" "------" "------"
+    for host in $hosts; do
+        port=443
+        if [[ "$host" == *:* ]]; then
+            port="${host#*:}"
+            host="${host%%:*}"
+        fi
+        cert_info=$(echo | timeout 5 openssl s_client -connect "$host:$port" -servername "$host" 2>/dev/null)
+        if [ -z "$cert_info" ]; then
+            printf '  %-25s  %-12s  %-20s  \033[0;31m%s\033[0m\n' "$host:$port" "-" "-" "UNREACHABLE"
+            continue
+        fi
+        expiry=$(echo "$cert_info" | openssl x509 -noout -enddate 2>/dev/null | cut -d= -f2)
+        issuer=$(echo "$cert_info" | openssl x509 -noout -issuer 2>/dev/null | sed 's/.*O = //;s/,.*//' | head -c 18)
+        if [ -n "$expiry" ]; then
+            exp_epoch=$(python3 -c "from datetime import datetime; d=datetime.strptime('$expiry','%b %d %H:%M:%S %Y %Z'); print(int(d.timestamp()))" 2>/dev/null || echo 0)
+            now_epoch=$(date +%s)
+            days_left=$(( (exp_epoch - now_epoch) / 86400 ))
+            if [ "$days_left" -lt 0 ]; then
+                status="\033[0;31mEXPIRED\033[0m"
+            elif [ "$days_left" -lt 30 ]; then
+                status="\033[1;33mEXPIRING\033[0m"
+            else
+                status="\033[0;32mOK\033[0m"
+            fi
+            printf "  %-25s  %-12s  %-20s  $status\n" "$host:$port" "${days_left}d" "$issuer"
+        fi
+    done
+    echo ""
+
+    # Local keychain certs expiring soon
+    echo -e "  \033[1mLocal Keychain — Expiring within 30 days\033[0m"
+    expiring=$(security find-certificate -a -p /Library/Keychains/System.keychain 2>/dev/null | \
+        awk '/BEGIN CERT/,/END CERT/' | \
+        while IFS= read -r line; do echo "$line"; done | \
+        openssl x509 -noout -enddate -subject 2>/dev/null | paste - - | \
+        while IFS= read -r combo; do
+            exp=$(echo "$combo" | grep -oP 'notAfter=\K.*' 2>/dev/null || echo "$combo" | sed 's/.*notAfter=//;s/subject.*//')
+            subj=$(echo "$combo" | sed 's/.*CN = //;s/,.*//' | head -c 30)
+            exp_ep=$(date -jf "%b %d %T %Y %Z" "$exp" +%s 2>/dev/null || echo 0)
+            now_ep=$(date +%s)
+            dl=$(( (exp_ep - now_ep) / 86400 ))
+            [ "$dl" -lt 30 ] && [ "$dl" -gt -365 ] && printf '  %-35s  %sd\n' "$subj" "$dl"
+        done 2>/dev/null)
+    if [ -n "$expiring" ]; then
+        echo "$expiring"
+    else
+        echo "  (none)"
+    fi
+    exit 0
+fi
+
+# ── Thermal Monitor (meister thermal) ──
+if [ "${1:-}" = "thermal" ]; then
+    INTERVAL="${2:-2}"
+    trap 'tput cnorm; echo; exit 0' INT TERM
+    tput civis
+    while true; do
+        clear
+        printf '\033[1;34m'
+        printf '  ╔══════════════════════════════════════════════════╗\n'
+        printf '  ║  MEISTER THERMAL — Temperature & Fan Monitor    ║\n'
+        printf '  ╚══════════════════════════════════════════════════╝\n'
+        printf '\033[0m\n'
+
+        # Thermal pressure
+        therm=$(sysctl -n machdep.xcpm.cpu_thermal_level 2>/dev/null || echo "n/a")
+        case "$therm" in
+            0) therm_txt="\033[0;32mNominal\033[0m" ;;
+            *[1-9]*) therm_txt="\033[1;33mElevated ($therm)\033[0m" ;;
+            *) therm_txt="$therm" ;;
+        esac
+        printf '  Thermal Level: %b\n' "$therm_txt"
+
+        # CPU frequency / performance
+        cpu_freq=$(sysctl -n hw.cpufrequency_max 2>/dev/null)
+        [ -n "$cpu_freq" ] && printf '  CPU Max Freq:  %s MHz\n' "$((cpu_freq / 1000000))"
+
+        # pmset thermal info
+        pmset_therm=$(pmset -g therm 2>/dev/null | grep -i "cpu_speed_limit" | awk '{print $NF}')
+        if [ -n "$pmset_therm" ]; then
+            if [ "$pmset_therm" -lt 100 ] 2>/dev/null; then
+                printf '  CPU Throttle:  \033[0;31m%s%% (throttled!)\033[0m\n' "$pmset_therm"
+            else
+                printf '  CPU Throttle:  \033[0;32m%s%% (no throttle)\033[0m\n' "$pmset_therm"
+            fi
+        fi
+
+        # Fan speed (if available)
+        echo ""
+        printf '  \033[1mFans\033[0m\n'
+        fan_count=$(sysctl -n hw.packages 2>/dev/null || echo 0)
+        fans_found=false
+        for key in $(ioreg -r -n AppleSMC 2>/dev/null | grep -oE 'F[0-9]Ac' | sort -u); do
+            speed=$(ioreg -r -n AppleSMC 2>/dev/null | grep "$key" | awk '{print $NF}' | head -1)
+            [ -n "$speed" ] && printf '  Fan %s: %s RPM\n' "${key:1:1}" "$speed" && fans_found=true
+        done
+        if ! $fans_found; then
+            # Try powermetrics style
+            echo "  (Fan data requires sudo or powermetrics)"
+        fi
+
+        # CPU usage heatmap
+        echo ""
+        printf '  \033[1mCPU Load\033[0m\n'
+        load=$(sysctl -n vm.loadavg 2>/dev/null | awk '{print $2, $3, $4}')
+        ncpu=$(sysctl -n hw.ncpu 2>/dev/null || echo 1)
+        printf '  Load: %s  (cores: %s)\n' "$load" "$ncpu"
+
+        # Per-core approximation
+        top -l 1 -n 0 -stats "" 2>/dev/null | grep "CPU usage" | \
+            awk '{printf "  User: %s  Sys: %s  Idle: %s\n", $3, $5, $7}'
+
+        # Memory pressure
+        echo ""
+        printf '  \033[1mMemory Pressure\033[0m\n'
+        mem_out=$(memory_pressure 2>/dev/null | tail -3)
+        echo "$mem_out" | sed 's/^/  /'
+
+        printf '\n\033[2m  Refresh: %ss  Ctrl+C to exit\033[0m\n' "$INTERVAL"
+        sleep "$INTERVAL"
+    done
+fi
+
+# ── Speedtest (meister speed) ──
+if [ "${1:-}" = "speed" ]; then
+    echo -e "\033[1;34m  MEISTER SPEED — Network Speed Test\033[0m"
+    echo ""
+
+    # Latency
+    echo -e "  \033[1mLatency\033[0m"
+    for target in 1.1.1.1 8.8.8.8 apple.com; do
+        ms=$(ping -c 3 -t 5 "$target" 2>/dev/null | tail -1 | awk -F'/' '{printf "%.1f", $5}')
+        if [ -n "$ms" ] && [ "$ms" != "0.0" ]; then
+            printf '  %-15s  %s ms\n' "$target" "$ms"
+        else
+            printf '  %-15s  timeout\n' "$target"
+        fi
+    done
+    echo ""
+
+    # Download speed (100MB test file from Cloudflare)
+    echo -e "  \033[1mDownload\033[0m"
+    echo "  Testing (100MB from Cloudflare)..."
+    dl_result=$(curl -o /dev/null -w '%{speed_download} %{time_total}' -s --max-time 15 \
+        "https://speed.cloudflare.com/__down?bytes=104857600" 2>/dev/null)
+    dl_speed=$(echo "$dl_result" | awk '{printf "%.1f", $1/1048576}')
+    dl_time=$(echo "$dl_result" | awk '{printf "%.1f", $2}')
+    echo "  Download: ${dl_speed} MB/s (${dl_time}s)"
+    dl_mbps=$(echo "$dl_speed" | awk '{printf "%.0f", $1 * 8}')
+    echo "  = ${dl_mbps} Mbps"
+    echo ""
+
+    # Upload speed (smaller payload)
+    echo -e "  \033[1mUpload\033[0m"
+    echo "  Testing (10MB to Cloudflare)..."
+    ul_result=$(dd if=/dev/zero bs=1048576 count=10 2>/dev/null | \
+        curl -o /dev/null -w '%{speed_upload} %{time_total}' -s --max-time 15 \
+        -X POST --data-binary @- "https://speed.cloudflare.com/__up" 2>/dev/null)
+    ul_speed=$(echo "$ul_result" | awk '{printf "%.1f", $1/1048576}')
+    ul_time=$(echo "$ul_result" | awk '{printf "%.1f", $2}')
+    echo "  Upload: ${ul_speed} MB/s (${ul_time}s)"
+    ul_mbps=$(echo "$ul_speed" | awk '{printf "%.0f", $1 * 8}')
+    echo "  = ${ul_mbps} Mbps"
+    echo ""
+
+    # Summary
+    printf '  \033[1mSummary\033[0m\n'
+    printf '  ↓ %s Mbps  ↑ %s Mbps\n' "$dl_mbps" "$ul_mbps"
+    exit 0
+fi
+
 # Fix #117: Long-Options before getopts abfangen (getopts kann only Short-Options)
 for arg in "$@"; do
     case "$arg" in
@@ -3646,9 +4122,18 @@ MAINTENANCE:
               -L Large files  -P Performance  -G Git
               -N Sniffnet (network monitor)
 
-NETWORK:
-  meister sniff        Live network monitor (Ctrl+C to exit)
-  meister sniff 5      Custom refresh interval (default: 3s)
+TOOLS:
+  meister sniff [N]    Live network monitor (default: 3s refresh)
+  meister disk [dir]   Disk space analyzer (default: ~)
+  meister ports        Open ports & listeners
+  meister dns          DNS leak test
+  meister battery      Battery health report
+  meister startup      Login items & launch agents audit
+  meister wifi         Wi-Fi diagnostics & channel scan
+  meister top [N]      Live process monitor (default: 3s refresh)
+  meister certs [host] SSL certificate checker
+  meister thermal [N]  Live temperature & fan monitor (default: 2s)
+  meister speed        Download/upload speed test
 
 DOTFILES SYNC:
   meister push         Collect configs, commit, push
