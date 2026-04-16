@@ -4,7 +4,7 @@
 # meister.sh
 #
 # Meister - macOS Maintenance, Update & Self-Healing
-# Version: 2.4
+# Version: 2.5
 # Date: 2026-04-10
 #
 # NEW in v1.1:
@@ -3524,17 +3524,27 @@ fi
 # ── Live Network Monitor (meister sniff) ──
 if [ "${1:-}" = "sniff" ]; then
     INTERVAL="${2:-3}"
+    # Prefer physical interface (en0/en1) over VPN tunnel for bandwidth stats
+    PHYS_IFACE=""
+    for _if in en0 en1; do
+        if ipconfig getifaddr "$_if" &>/dev/null; then PHYS_IFACE="$_if"; break; fi
+    done
     IFACE=$(route -n get default 2>/dev/null | awk '/interface:/{print $2}')
-    [ -z "$IFACE" ] && echo "No active interface" && exit 1
-    IP=$(ipconfig getifaddr "$IFACE" 2>/dev/null || echo "n/a")
+    [ -z "$IFACE" ] && [ -z "$PHYS_IFACE" ] && echo "No active interface" && exit 1
+    BW_IFACE="${PHYS_IFACE:-$IFACE}"
+    PHYS_IP=$(ipconfig getifaddr "$BW_IFACE" 2>/dev/null || echo "n/a")
+    VPN_IFACE=""
+    if [ -n "$PHYS_IFACE" ] && [ "$IFACE" != "$PHYS_IFACE" ]; then
+        VPN_IFACE="$IFACE"
+    fi
     trap 'tput cnorm; echo; exit 0' INT TERM
 
     tput civis
     while true; do
-        # Bandwidth sample
-        local_s1=$(netstat -I "$IFACE" -b 2>/dev/null | awk 'NR==2{print $7, $10}')
+        # Bandwidth sample on physical interface
+        local_s1=$(netstat -I "$BW_IFACE" -b 2>/dev/null | awk 'NR==2{print $7, $10}')
         sleep "$INTERVAL"
-        local_s2=$(netstat -I "$IFACE" -b 2>/dev/null | awk 'NR==2{print $7, $10}')
+        local_s2=$(netstat -I "$BW_IFACE" -b 2>/dev/null | awk 'NR==2{print $7, $10}')
         in1=$(echo "$local_s1" | awk '{print $1}') out1=$(echo "$local_s1" | awk '{print $2}')
         in2=$(echo "$local_s2" | awk '{print $1}') out2=$(echo "$local_s2" | awk '{print $2}')
         in_kb=$(( (in2 - in1) / INTERVAL / 1024 ))
@@ -3555,11 +3565,13 @@ if [ "${1:-}" = "sniff" ]; then
         printf '\033[1;34m'
         printf '  ╔══════════════════════════════════════════════════╗\n'
         printf '  ║  MEISTER SNIFF — Live Network Monitor           ║\n'
-        printf '  ║  %s (%s)  Refresh: %ss               ║\n' "$IFACE" "$IP" "$INTERVAL"
         printf '  ╚══════════════════════════════════════════════════╝\n'
         printf '\033[0m\n'
+        printf '  Interface: %s (%s)' "$BW_IFACE" "$PHYS_IP"
+        [ -n "$VPN_IFACE" ] && printf '  VPN: %s' "$VPN_IFACE"
+        printf '  Refresh: %ss\n\n' "$INTERVAL"
 
-        printf '\033[1m  Bandwidth\033[0m\n'
+        printf '\033[1m  Bandwidth (%s)\033[0m\n' "$BW_IFACE"
         printf '  ↓ IN:  %s KB/s    ↑ OUT: %s KB/s\n\n' "$in_kb" "$out_kb"
 
         printf '\033[1m  Connections\033[0m\n'
