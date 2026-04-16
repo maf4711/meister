@@ -4,7 +4,7 @@
 # meister.sh
 #
 # Meister - macOS Maintenance, Update & Self-Healing
-# Version: 4.1
+# Version: 4.2
 # Date: 2026-04-10
 #
 # NEW in v1.1:
@@ -3602,6 +3602,76 @@ if [ "${1:-}" = "sniff" ]; then
     done
 fi
 
+# ── Network Top (meister ntop) ──
+if [ "${1:-}" = "ntop" ]; then
+    INTERVAL="${2:-3}"
+    trap 'tput cnorm; echo; exit 0' INT TERM
+    tput civis
+    while true; do
+        # Sample with nettop delta mode
+        raw=$(nettop -P -d -L 2 -n -x -j bytes_in,bytes_out -s "$INTERVAL" 2>/dev/null | tail -n +2)
+
+        # Parse: process.pid, bytes_in, bytes_out → sort by total
+        parsed=$(echo "$raw" | awk -F',' '
+            $2 != "" {
+                name=$2; sub(/\.[0-9]+$/,"",name);
+                bi=$5+0; bo=$6+0; total=bi+bo;
+                if(total>0) printf "%d\t%d\t%d\t%s\n", total, bi, bo, name
+            }' | sort -rn | head -10)
+
+        clear
+        printf '\033[1;34m'
+        printf '  ╔══════════════════════════════════════════════════╗\n'
+        printf '  ║  MEISTER NTOP — Network Traffic Top 10          ║\n'
+        printf '  ╚══════════════════════════════════════════════════╝\n'
+        printf '\033[0m\n'
+
+        # Header
+        printf '  \033[1m%-20s  %10s  %10s  %10s\033[0m\n' "PROCESS" "IN" "OUT" "TOTAL"
+        printf '  %-20s  %10s  %10s  %10s\n' "-------" "----" "-----" "------"
+
+        # Find max for bar scaling
+        max_total=$(echo "$parsed" | head -1 | cut -f1)
+        [ -z "$max_total" ] || [ "$max_total" -eq 0 ] 2>/dev/null && max_total=1
+
+        echo "$parsed" | while IFS=$'\t' read -r total bi bo name; do
+            # Human-readable sizes
+            if [ "$bi" -ge 1048576 ]; then
+                bi_h=$(awk "BEGIN{printf \"%.1f MB\", $bi/1048576}")
+            elif [ "$bi" -ge 1024 ]; then
+                bi_h=$(awk "BEGIN{printf \"%.0f KB\", $bi/1024}")
+            else
+                bi_h="${bi} B"
+            fi
+            if [ "$bo" -ge 1048576 ]; then
+                bo_h=$(awk "BEGIN{printf \"%.1f MB\", $bo/1048576}")
+            elif [ "$bo" -ge 1024 ]; then
+                bo_h=$(awk "BEGIN{printf \"%.0f KB\", $bo/1024}")
+            else
+                bo_h="${bo} B"
+            fi
+            if [ "$total" -ge 1048576 ]; then
+                tot_h=$(awk "BEGIN{printf \"%.1f MB\", $total/1048576}")
+            elif [ "$total" -ge 1024 ]; then
+                tot_h=$(awk "BEGIN{printf \"%.0f KB\", $total/1024}")
+            else
+                tot_h="${total} B"
+            fi
+
+            bar_len=$((total * 25 / max_total))
+            [ "$bar_len" -lt 1 ] && bar_len=1
+            bar=$(printf '%*s' "$bar_len" '' | tr ' ' '█')
+            printf '  %-20s  %10s  %10s  %10s  %s\n' "$name" "$bi_h" "$bo_h" "$tot_h" "$bar"
+        done
+
+        if [ -z "$parsed" ]; then
+            echo "  (no network activity)"
+        fi
+
+        printf '\n\033[2m  Refresh: %ss  Ctrl+C to exit\033[0m\n' "$INTERVAL"
+    done
+fi
+
 # ── Disk Analyzer (meister disk) ──
 if [ "${1:-}" = "disk" ]; then
     TARGET="${2:-$HOME}"
@@ -4153,6 +4223,7 @@ MAINTENANCE:
 
 TOOLS:
   meister sniff [N]    Live network monitor (default: 3s refresh)
+  meister ntop [N]     Live network traffic top 10 (default: 3s)
   meister disk [dir]   Disk space analyzer (default: ~)
   meister ports        Open ports & listeners
   meister dns          DNS leak test
