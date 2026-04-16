@@ -4,7 +4,7 @@
 # meister.sh
 #
 # Meister - macOS Maintenance, Update & Self-Healing
-# Version: 2.2
+# Version: 2.3
 # Date: 2026-04-10
 #
 # NEW in v1.1:
@@ -1619,9 +1619,8 @@ module_sniffnet() {
     # 5. Suspicious connections check
     log STEP "   [5/5] Connection audit..."
     local non_std=$(lsof -i -nP 2>/dev/null | awk 'NR>1 && $8=="TCP" && $9~/ESTABLISHED/' | \
-        awk -F'[>: ]' '{print $NF}' | sort -u | while read -r port; do
-            case "$port" in 80|443|53|22|8080|8443|993|587|465|143|110|25) ;; *) echo "$port" ;; esac
-        done | head -10)
+        awk -F'[>: ]' '{print $NF}' | sort -u | \
+        grep -vE '^(80|443|53|22|8080|8443|993|587|465|143|110|25)$' | head -10)
     if [ -n "$non_std" ]; then
         log WARN "   Non-standard outbound ports: $(echo "$non_std" | tr '\n' ' ')"
         issues=$((issues + 1))
