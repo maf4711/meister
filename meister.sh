@@ -3521,6 +3521,177 @@ if [ -n "$_MEISTER_DOTFILES_SCRIPT" ]; then
     esac
 fi
 
+# ── Interactive Menu (meister menu) — Dexter-style TUI ──
+if [ "${1:-}" = "menu" ]; then
+    _MENU_PRIMARY='\033[38;5;33m'   # blue
+    _MENU_BOLD='\033[1m'
+    _MENU_DIM='\033[2m'
+    _MENU_NC='\033[0m'
+    _MENU_REV='\033[7m'
+    _MENU_CYAN='\033[0;36m'
+
+    _menu_banner() {
+        echo -e "${_MENU_PRIMARY}${_MENU_BOLD}"
+        cat << 'BANNER'
+
+███╗   ███╗███████╗██╗███████╗████████╗███████╗██████╗
+████╗ ████║██╔════╝██║██╔════╝╚══██╔══╝██╔════╝██╔══██╗
+██╔████╔██║█████╗  ██║███████╗   ██║   █████╗  ██████╔╝
+██║╚██╔╝██║██╔══╝  ██║╚════██║   ██║   ██╔══╝  ██╔══██╗
+██║ ╚═╝ ██║███████╗██║███████║   ██║   ███████╗██║  ██║
+╚═╝     ╚═╝╚══════╝╚═╝╚══════╝   ╚═╝   ╚══════╝╚═╝  ╚═╝
+BANNER
+        echo -e "${_MENU_NC}"
+        echo -e "  ${_MENU_DIM}macOS Maintenance, Self-Healing & Dotfiles Sync${_MENU_NC}"
+        echo -e "  ${_MENU_DIM}Version 4.2${_MENU_NC}"
+        echo ""
+    }
+
+    # Menu items: label|command
+    _MENU_ITEMS=(
+        "Auto-Detect (recommended)|auto"
+        "All Modules|all"
+        "Health Dashboard|health"
+        "Performance Tuning|perf"
+        "─── Tools ───|separator"
+        "Network Monitor (sniff)|sniff"
+        "Network Top|ntop"
+        "Disk Analyzer|disk"
+        "Open Ports|ports"
+        "DNS Leak Test|dns"
+        "Battery Health|battery"
+        "Startup Audit|startup"
+        "Wi-Fi Diagnostics|wifi"
+        "Process Monitor|top"
+        "SSL Certificates|certs"
+        "Thermal Monitor|thermal"
+        "Speed Test|speed"
+        "─── Modules ───|separator"
+        "Xcode Clean|xcode"
+        "Empty Trash|trash"
+        "Clean Caches|caches"
+        "Large Files|large"
+        "Git Repos|git"
+        "─── Dotfiles ───|separator"
+        "Push Configs|push"
+        "Pull Configs|pull"
+        "Scan Configs|scan"
+        "Bootstrap Machine|bootstrap"
+        "Dotfiles Status|status"
+        "─── ───|separator"
+        "Dry-Run Mode|dryrun"
+        "Quit|quit"
+    )
+
+    _menu_selected=0
+    # Skip separators for initial selection
+    while [[ "${_MENU_ITEMS[$_menu_selected]}" == *"|separator" ]]; do
+        _menu_selected=$((_menu_selected + 1))
+    done
+
+    _menu_draw() {
+        local total=${#_MENU_ITEMS[@]}
+        for ((i=0; i<total; i++)); do
+            local label="${_MENU_ITEMS[$i]%%|*}"
+            local cmd="${_MENU_ITEMS[$i]##*|}"
+
+            if [ "$cmd" = "separator" ]; then
+                echo -e "  ${_MENU_DIM}${label}${_MENU_NC}"
+                continue
+            fi
+
+            if [ "$i" -eq "$_menu_selected" ]; then
+                echo -e "  ${_MENU_PRIMARY}${_MENU_BOLD}❯ ${label}${_MENU_NC}"
+            else
+                echo -e "    ${label}"
+            fi
+        done
+        echo ""
+        echo -e "  ${_MENU_DIM}↑/↓ navigate · enter select · q quit${_MENU_NC}"
+    }
+
+    _menu_next() {
+        local total=${#_MENU_ITEMS[@]}
+        local n=$((_menu_selected + 1))
+        while [ "$n" -lt "$total" ]; do
+            [[ "${_MENU_ITEMS[$n]}" != *"|separator" ]] && { _menu_selected=$n; return; }
+            n=$((n + 1))
+        done
+    }
+
+    _menu_prev() {
+        local n=$((_menu_selected - 1))
+        while [ "$n" -ge 0 ]; do
+            [[ "${_MENU_ITEMS[$n]}" != *"|separator" ]] && { _menu_selected=$n; return; }
+            n=$((n - 1))
+        done
+    }
+
+    _menu_exec() {
+        local cmd="${_MENU_ITEMS[$_menu_selected]##*|}"
+        local self="$0"
+        tput cnorm
+        echo ""
+        case "$cmd" in
+            auto)      exec bash "$self" ;;
+            all)       exec bash "$self" -a ;;
+            health)    exec bash "$self" -H ;;
+            perf)      exec bash "$self" -P ;;
+            sniff)     exec bash "$self" sniff ;;
+            ntop)      exec bash "$self" ntop ;;
+            disk)      exec bash "$self" disk ;;
+            ports)     exec bash "$self" ports ;;
+            dns)       exec bash "$self" dns ;;
+            battery)   exec bash "$self" battery ;;
+            startup)   exec bash "$self" startup ;;
+            wifi)      exec bash "$self" wifi ;;
+            top)       exec bash "$self" top ;;
+            certs)     exec bash "$self" certs ;;
+            thermal)   exec bash "$self" thermal ;;
+            speed)     exec bash "$self" speed ;;
+            xcode)     exec bash "$self" -X ;;
+            trash)     exec bash "$self" -T ;;
+            caches)    exec bash "$self" -C ;;
+            large)     exec bash "$self" -L ;;
+            git)       exec bash "$self" -G ;;
+            push)      exec bash "$self" push ;;
+            pull)      exec bash "$self" pull ;;
+            scan)      exec bash "$self" scan ;;
+            bootstrap) exec bash "$self" bootstrap ;;
+            status)    exec bash "$self" status ;;
+            dryrun)    exec bash "$self" -n ;;
+            quit)      exit 0 ;;
+        esac
+    }
+
+    # TUI loop
+    clear
+    tput civis
+    trap 'tput cnorm; exit 0' INT TERM
+    while true; do
+        tput home
+        _menu_banner
+        _menu_draw
+        # Clear leftover lines from previous render
+        tput ed
+        # Read single keypress
+        IFS= read -rsn1 key
+        case "$key" in
+            q) tput cnorm; exit 0 ;;
+            "") _menu_exec ;;  # Enter
+            $'\x1b')
+                read -rsn2 -t 0.1 seq
+                case "$seq" in
+                    '[A') _menu_prev ;;  # Up
+                    '[B') _menu_next ;;  # Down
+                esac
+                ;;
+            k) _menu_prev ;;  # vim up
+            j) _menu_next ;;  # vim down
+        esac
+    done
+fi
+
 # ── Live Network Monitor (meister sniff) ──
 if [ "${1:-}" = "sniff" ]; then
     INTERVAL="${2:-3}"
@@ -4183,6 +4354,7 @@ for arg in "$@"; do
         --help)    set -- "-h"; break ;;
         --version) echo "meister v2.1"; exit 0 ;;
         --dry-run) set -- "-n"; break ;;
+        --menu)    set -- "menu"; break ;;
         --*)       echo "[ERROR] Unknown option: $arg (see meister -h)"; exit 1 ;;
     esac
 done
@@ -4211,6 +4383,7 @@ Meister - macOS Maintenance, Self-Healing & Dotfiles Sync
 
 MAINTENANCE:
   meister              Auto-detect (default)
+  meister menu         Interactive menu (TUI)
   meister -a           Force all modules
   meister -n           Dry-run
   meister -q           Quiet (warnings/fixes only)
