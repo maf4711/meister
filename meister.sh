@@ -4,7 +4,7 @@
 # meister.sh
 #
 # Meister - macOS Maintenance, Update & Self-Healing
-# Version: 4.4
+# Version: 4.5
 # Date: 2026-04-10
 #
 # NEW in v1.1:
@@ -874,14 +874,36 @@ module_homebrew() {
     log INFO "   Upgrading casks (--greedy)..."
     run_verbose brew upgrade --cask --greedy
 
-    # Fix #142: Post-Upgrade Cask-Verifikation
+    # Fix #142: Post-Upgrade Cask-Verifikation — split deprecated/disabled from auto-update
     local still_outdated_casks=$(brew outdated --cask --greedy 2>/dev/null)
     if [ -n "$still_outdated_casks" ]; then
-        local still_cask_count=$(( $(echo "$still_outdated_casks" | wc -l) ))
-        log STEP "   ${still_cask_count} casks still outdated (auto-update apps, normal)"
-        echo "$still_outdated_casks" | while IFS= read -r line; do
-            log STEP "     - $line"
-        done
+        local dead_casks="" live_casks=""
+        while IFS= read -r line; do
+            local name="${line%% *}"
+            [ -z "$name" ] && continue
+            if brew info --cask "$name" 2>&1 | grep -qE 'deprecated!|disabled!'; then
+                dead_casks+="$line"$'\n'
+            else
+                live_casks+="$line"$'\n'
+            fi
+        done <<< "$still_outdated_casks"
+
+        if [ -n "$live_casks" ]; then
+            local live_count=$(echo -n "$live_casks" | grep -c '^')
+            log STEP "   ${live_count} casks still outdated (auto-update apps, normal)"
+            echo -n "$live_casks" | while IFS= read -r line; do
+                log STEP "     - $line"
+            done
+        fi
+        if [ -n "$dead_casks" ]; then
+            local dead_count=$(echo -n "$dead_casks" | grep -c '^')
+            log WARN "   ${dead_count} deprecated/disabled casks — uninstall recommended:"
+            echo -n "$dead_casks" | while IFS= read -r line; do
+                local name="${line%% *}"
+                log STEP "     - $line  →  brew uninstall --cask $name"
+            done
+            report_add WARN "${dead_count} deprecated casks still installed"
+        fi
     fi
 
     # Fix #23: autoremove after upgrade
@@ -2798,12 +2820,14 @@ selfheal_preflight() {
     fi
 
     log STEP "   Checking DNS..."
-    if ! host google.com &>/dev/null 2>&1; then
+    # dscacheutil uses the full macOS resolver chain (mDNSResponder, VPN split-DNS, /etc/resolver)
+    _dns_ok() { dscacheutil -q host -a name "$1" 2>/dev/null | grep -q '^ip_address:'; }
+    if ! _dns_ok apple.com; then
         log WARN "   DNS-Aufloesung failed"
         sudo -n dscacheutil -flushcache 2>/dev/null
         sudo -n killall -HUP mDNSResponder 2>/dev/null
         sleep 1
-        if host google.com &>/dev/null 2>&1; then
+        if _dns_ok apple.com; then
             log FIX "   DNS after Flush OK"
             report_add FIX "DNS-Cache geleert (Preflight)"
         fi
@@ -3416,7 +3440,7 @@ build_report_summary() {
     local summary="OK:${#REPORT_SUCCESS[@]} FIX:${#REPORT_FIXED[@]} WARN:${#REPORT_WARNINGS[@]} ERR:${#REPORT_ERRORS[@]}"
     local end_ts=$(date +%s)
     local total_mins=$(( (end_ts - SCRIPT_START_TIME) / 60 ))
-    echo "Meister v4.4 | ${total_mins}min | $summary"
+    echo "Meister v4.5 | ${total_mins}min | $summary"
 }
 
 send_report_notification() {
@@ -4536,7 +4560,7 @@ acquire_lock
 
 echo -e "${BOLD}${BLUE}"
 echo "  ╔══════════════════════════════════════════╗"
-echo "  ║        MEISTER v4.4                     ║"
+echo "  ║        MEISTER v4.5                     ║"
 echo "  ║   macOS Maintenance & Self-Healing           ║"
 $DRY_RUN && echo "  ║   [DRY-RUN MODE]                        ║"
 ! $MANUAL_FLAGS_SET && $AUTO_DETECT && echo "  ║   [AUTO-DETECT]                          ║"
@@ -4544,7 +4568,7 @@ echo "  ╚═══════════════════════
 echo -e "${NC}"
 
 start_bw_monitor
-log INFO "Meister v4.4 started ($(date))"
+log INFO "Meister v4.5 started ($(date))"
 $DRY_RUN && log WARN "DRY-RUN: No changes will be made"
 log STEP "   Logfile: $LOGFILE"
 [ -f "$MEISTER_CONFIG" ] && log STEP "   Config: $MEISTER_CONFIG loaded"
