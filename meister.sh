@@ -4,7 +4,7 @@
 # meister.sh
 #
 # Meister - macOS Maintenance, Update & Self-Healing
-# Version: 4.7
+# Version: 4.8
 # Date: 2026-04-10
 #
 # NEW in v1.1:
@@ -3319,7 +3319,7 @@ module_benchmark() {
 }
 
 #############################
-# 7b. EXTRA MODULES (v4.7+)
+# 7b. EXTRA MODULES (v4.8+)
 #############################
 
 module_healer() {
@@ -3799,7 +3799,7 @@ build_report_summary() {
     local summary="OK:${#REPORT_SUCCESS[@]} FIX:${#REPORT_FIXED[@]} WARN:${#REPORT_WARNINGS[@]} ERR:${#REPORT_ERRORS[@]}"
     local end_ts=$(date +%s)
     local total_mins=$(( (end_ts - SCRIPT_START_TIME) / 60 ))
-    echo "Meister v4.7 | ${total_mins}min | $summary"
+    echo "Meister v4.8 | ${total_mins}min | $summary"
 }
 
 send_report_notification() {
@@ -4798,6 +4798,7 @@ TOOLS:
   meister ports        Open ports & listeners
   meister dns          DNS leak test
   meister battery      Battery health report
+  meister heal [--dry-run]  Proactive auto-healer (broken symlinks, orphans, DNS, casks)
   meister startup      Login items & launch agents audit
   meister wifi         Wi-Fi diagnostics & channel scan
   meister top [N]      Live process monitor (default: 3s refresh)
@@ -4930,7 +4931,7 @@ acquire_lock
 
 echo -e "${BOLD}${BLUE}"
 echo "  ╔══════════════════════════════════════════╗"
-echo "  ║        MEISTER v4.7                     ║"
+echo "  ║        MEISTER v4.8                     ║"
 echo "  ║   macOS Maintenance & Self-Healing           ║"
 $DRY_RUN && echo "  ║   [DRY-RUN MODE]                        ║"
 ! $MANUAL_FLAGS_SET && $AUTO_DETECT && echo "  ║   [AUTO-DETECT]                          ║"
@@ -4938,7 +4939,7 @@ echo "  ╚═══════════════════════
 echo -e "${NC}"
 
 start_bw_monitor
-log INFO "Meister v4.7 started ($(date))"
+log INFO "Meister v4.8 started ($(date))"
 $DRY_RUN && log WARN "DRY-RUN: No changes will be made"
 log STEP "   Logfile: $LOGFILE"
 [ -f "$MEISTER_CONFIG" ] && log STEP "   Config: $MEISTER_CONFIG loaded"
