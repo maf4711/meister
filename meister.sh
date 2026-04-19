@@ -4,7 +4,7 @@
 # meister.sh
 #
 # Meister - macOS Maintenance, Update & Self-Healing
-# Version: 5.0
+# Version: 5.1
 # Date: 2026-04-10
 #
 # NEW in v1.1:
@@ -3319,7 +3319,7 @@ module_benchmark() {
 }
 
 #############################
-# 7b. EXTRA MODULES (v5.0+)
+# 7b. EXTRA MODULES (v5.1+)
 #############################
 
 module_healer() {
@@ -3378,21 +3378,18 @@ module_healer() {
         fi
     done < <(find "$HOME/Library/Preferences" -maxdepth 1 -name "*.plist" -size +0 2>/dev/null)
 
-    # 4. Broken casks (app source gone) — report only, user decides reinstall vs uninstall
+    # 4. Broken casks (app source gone) — auto-uninstall (app is already gone, cask is stale)
     if command_exists brew; then
-        local broken_cask_count=0
         while IFS= read -r name; do
             [ -z "$name" ] && continue
             local app_path
             app_path=$(brew info --cask "$name" 2>/dev/null | grep -oE "/Applications/[^']+\.app" | head -1)
             if [ -n "$app_path" ] && [ ! -d "$app_path" ]; then
-                log WARN "   broken cask: $name (missing $app_path)"
-                log STEP "     reinstall:  brew reinstall --cask --force $name"
-                log STEP "     OR remove:  brew uninstall --cask --force $name"
-                broken_cask_count=$((broken_cask_count + 1))
+                log HEAL "   broken cask: $name (missing $app_path) — uninstalling"
+                fixed=$((fixed + 1))
+                $DRY_RUN || brew uninstall --cask --force "$name" >/dev/null 2>&1
             fi
         done < <(brew list --cask 2>/dev/null)
-        [ "$broken_cask_count" -gt 0 ] && report_add WARN "${broken_cask_count} broken cask(s) — manual action needed"
     fi
 
     # 5. DNS broken → flush
@@ -3811,7 +3808,7 @@ build_report_summary() {
     local summary="OK:${#REPORT_SUCCESS[@]} FIX:${#REPORT_FIXED[@]} WARN:${#REPORT_WARNINGS[@]} ERR:${#REPORT_ERRORS[@]}"
     local end_ts=$(date +%s)
     local total_mins=$(( (end_ts - SCRIPT_START_TIME) / 60 ))
-    echo "Meister v5.0 | ${total_mins}min | $summary"
+    echo "Meister v5.1 | ${total_mins}min | $summary"
 }
 
 send_report_notification() {
@@ -4700,6 +4697,12 @@ if [ "${1:-}" = "heal" ]; then
     DRY_RUN=false
     [ "${2:-}" = "--dry-run" ] && DRY_RUN=true
     $DRY_RUN && echo "  [DRY-RUN MODE — no changes]" && echo ""
+    # Cache sudo upfront so system-bin fixes don't fail mid-run
+    if ! $DRY_RUN && [ "$(id -u)" -ne 0 ]; then
+        if [ -t 0 ]; then
+            sudo -v 2>/dev/null || log WARN "sudo unavailable — some fixes will skip"
+        fi
+    fi
     module_healer
     exit 0
 fi
@@ -4943,7 +4946,7 @@ acquire_lock
 
 echo -e "${BOLD}${BLUE}"
 echo "  ╔══════════════════════════════════════════╗"
-echo "  ║        MEISTER v5.0                     ║"
+echo "  ║        MEISTER v5.1                     ║"
 echo "  ║   macOS Maintenance & Self-Healing           ║"
 $DRY_RUN && echo "  ║   [DRY-RUN MODE]                        ║"
 ! $MANUAL_FLAGS_SET && $AUTO_DETECT && echo "  ║   [AUTO-DETECT]                          ║"
@@ -4951,7 +4954,7 @@ echo "  ╚═══════════════════════
 echo -e "${NC}"
 
 start_bw_monitor
-log INFO "Meister v5.0 started ($(date))"
+log INFO "Meister v5.1 started ($(date))"
 $DRY_RUN && log WARN "DRY-RUN: No changes will be made"
 log STEP "   Logfile: $LOGFILE"
 [ -f "$MEISTER_CONFIG" ] && log STEP "   Config: $MEISTER_CONFIG loaded"
