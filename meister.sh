@@ -4,7 +4,7 @@
 # meister.sh
 #
 # Meister - macOS Maintenance, Update & Self-Healing
-# Version: 5.5
+# Version: 5.6
 # Date: 2026-04-10
 #
 # NEW in v1.1:
@@ -3357,7 +3357,7 @@ module_benchmark() {
 }
 
 #############################
-# 7b. EXTRA MODULES (v5.5+)
+# 7b. EXTRA MODULES (v5.6+)
 #############################
 
 module_healer() {
@@ -3901,6 +3901,60 @@ module_tcc_privacy_audit() {
     [ "$sensitive_count" -gt 0 ] && report_add WARN "${sensitive_count} apps with Camera/Mic/Screen/FDA grants"
 }
 
+module_simfix() {
+    log INFO "Fixing iOS Simulator..."
+    command_exists xcrun || { log STEP "   xcrun missing (Xcode not installed)"; return 0; }
+
+    bw_phase "SimFix: killing stale processes"
+    local killed=0
+    for proc in Simulator SimulatorTrampoline SimLaunchHost.arm64 simdiskimaged com.apple.CoreSimulator.CoreSimulatorService; do
+        if pgrep -x "$proc" >/dev/null 2>&1; then
+            log STEP "   kill: $proc"
+            $DRY_RUN || killall -9 "$proc" 2>/dev/null
+            killed=$((killed + 1))
+        fi
+    done
+    [ "$killed" -eq 0 ] && log STEP "   No stale processes"
+
+    bw_phase "SimFix: shutdown all devices"
+    $DRY_RUN || xcrun simctl shutdown all 2>/dev/null
+
+    bw_phase "SimFix: delete unavailable"
+    local unavail_before
+    unavail_before=$(xcrun simctl list devices 2>/dev/null | grep -c unavailable)
+    if [ "$unavail_before" -gt 0 ]; then
+        log STEP "   removing ${unavail_before} unavailable device(s)"
+        $DRY_RUN || xcrun simctl delete unavailable 2>/dev/null
+    fi
+
+    bw_phase "SimFix: clear CoreSimulator caches"
+    local cache_dir="$HOME/Library/Developer/CoreSimulator/Caches"
+    if [ -d "$cache_dir" ]; then
+        local cache_mb; cache_mb=$(du -sm "$cache_dir" 2>/dev/null | awk '{print $1}')
+        log STEP "   caches: ${cache_mb} MB"
+        $DRY_RUN || rm -rf "$cache_dir"/* 2>/dev/null
+    fi
+
+    bw_phase "SimFix: kickstart CoreSimulatorService"
+    if ! $DRY_RUN; then
+        if sudo -n launchctl kickstart -k "system/com.apple.CoreSimulator.CoreSimulatorService" 2>/dev/null; then
+            log FIX "   CoreSimulatorService restarted"
+        else
+            log STEP "   (skipped kickstart — needs sudo)"
+        fi
+    fi
+
+    bw_phase "SimFix: verifying"
+    sleep 2
+    if xcrun simctl list devices available >/dev/null 2>&1; then
+        log FIX "   Simulator ready — launch: open -a Simulator"
+        report_add FIX "iOS Simulator reset (try: open -a Simulator)"
+    else
+        log WARN "   simctl still unresponsive — try: sudo xcode-select -r"
+        report_add WARN "Simulator still broken after reset"
+    fi
+}
+
 module_receipts_audit() {
     log INFO "Auditing orphan installer receipts..."
     bw_phase "Receipts: enumerating"
@@ -4115,7 +4169,7 @@ build_report_summary() {
     local summary="OK:${#REPORT_SUCCESS[@]} FIX:${#REPORT_FIXED[@]} WARN:${#REPORT_WARNINGS[@]} ERR:${#REPORT_ERRORS[@]}"
     local end_ts=$(date +%s)
     local total_mins=$(( (end_ts - SCRIPT_START_TIME) / 60 ))
-    echo "Meister v5.5 | ${total_mins}min | $summary"
+    echo "Meister v5.6 | ${total_mins}min | $summary"
 }
 
 send_report_notification() {
@@ -4997,6 +5051,25 @@ if [ "${1:-}" = "thermal" ]; then
     done
 fi
 
+# ── Simulator Fix (meister simfix) ──
+if [ "${1:-}" = "simfix" ]; then
+    echo -e "\033[1;34m  MEISTER SIMFIX — Repair iOS Simulator\033[0m"
+    echo ""
+    DRY_RUN=false
+    [ "${2:-}" = "--dry-run" ] && DRY_RUN=true
+    $DRY_RUN && echo "  [DRY-RUN MODE — no changes]" && echo ""
+    # Cache sudo for CoreSimulatorService kickstart
+    if ! $DRY_RUN && [ -t 0 ]; then
+        sudo -v 2>/dev/null || echo "  (sudo unavailable — kickstart step will skip)"
+    fi
+    MODULE_TOTAL=1
+    start_bw_monitor
+    bw_set_status 1 1 "Simulator Fix"
+    module_simfix
+    stop_bw_monitor
+    exit 0
+fi
+
 # ── Free RAM (meister free) ──
 if [ "${1:-}" = "free" ]; then
     echo -e "\033[1;34m  MEISTER FREE — Free up RAM & reset UI\033[0m"
@@ -5148,6 +5221,7 @@ TOOLS:
   meister battery      Battery health report
   meister heal [--dry-run]  Proactive auto-healer (broken symlinks, orphans, DNS, casks)
   meister free [--restart-ui]  Free RAM (sudo purge) + optionally restart Finder/Dock
+  meister simfix       Fix stuck iOS Simulator (kill stale procs, reset CoreSimulator)
   meister startup      Login items & launch agents audit
   meister wifi         Wi-Fi diagnostics & channel scan
   meister top [N]      Live process monitor (default: 3s refresh)
@@ -5280,7 +5354,7 @@ acquire_lock
 
 echo -e "${BOLD}${BLUE}"
 echo "  ╔══════════════════════════════════════════╗"
-echo "  ║        MEISTER v5.5                     ║"
+echo "  ║        MEISTER v5.6                     ║"
 echo "  ║   macOS Maintenance & Self-Healing           ║"
 $DRY_RUN && echo "  ║   [DRY-RUN MODE]                        ║"
 ! $MANUAL_FLAGS_SET && $AUTO_DETECT && echo "  ║   [AUTO-DETECT]                          ║"
@@ -5288,7 +5362,7 @@ echo "  ╚═══════════════════════
 echo -e "${NC}"
 
 start_bw_monitor
-log INFO "Meister v5.5 started ($(date))"
+log INFO "Meister v5.6 started ($(date))"
 $DRY_RUN && log WARN "DRY-RUN: No changes will be made"
 log STEP "   Logfile: $LOGFILE"
 [ -f "$MEISTER_CONFIG" ] && log STEP "   Config: $MEISTER_CONFIG loaded"
@@ -5336,8 +5410,8 @@ else
     OLLAMA_ENABLED=false
 fi
 
-# Modul-Anzahl berechnen (14 core + 10 extras + 1 healer + 5 maintenance + 6 killer)
-MODULE_TOTAL=36
+# Modul-Anzahl berechnen (14 core + 10 extras + 1 healer + 5 maintenance + 6 killer + 1 simfix)
+MODULE_TOTAL=37
 $RUN_SUDO_TASKS && MODULE_TOTAL=$((MODULE_TOTAL + 1))
 
 # Preflight
@@ -5382,6 +5456,7 @@ if check_net; then
     run_module_safe ".DS_Store"      module_dsstore_cleanup
     run_module_safe "LaunchServices" module_launchservices_rebuild
     run_module_safe "Privacy Audit"  module_tcc_privacy_audit
+    run_module_safe "Simulator Fix"  module_simfix
 
     if $RUN_SUDO_TASKS; then
         section_header "System maintenance (sudo)"
