@@ -383,6 +383,7 @@ _bw_get_bytes() {
 }
 start_bw_monitor() {
     [ ! -t 1 ] && return  # no terminal, skip
+    # Background process pins speed to the last terminal line
     (
         local prev; prev=$(_bw_get_bytes)
         local prev_in=${prev%% *} prev_out=${prev##* }
@@ -394,9 +395,12 @@ start_bw_monitor() {
             local ul=$(( (curr_out - prev_out) / 1024 ))
             [ "$dl" -lt 0 ] 2>/dev/null && dl=0
             [ "$ul" -lt 0 ] 2>/dev/null && ul=0
+            local lines; lines=$(tput lines 2>/dev/null || echo 24)
             local cols; cols=$(tput cols 2>/dev/null || echo 80)
-            # Save cursor, move to bottom-left, clear line, print, restore cursor
-            printf '\0337\033[%d;1H\033[2K\033[2m ↓ %d KB/s  ↑ %d KB/s\033[0m\0338' "$(tput lines 2>/dev/null || echo 24)" "$dl" "$ul"
+            local status=" ↓ ${dl} KB/s  ↑ ${ul} KB/s"
+            # Lock scroll region to lines 1..(n-1), pin status bar on line n
+            printf '\033[1;%dr' "$((lines - 1))"
+            printf '\0337\033[%d;1H\033[2K\033[7m\033[2m%-*s\033[0m\0338' "$lines" "$cols" "$status"
             prev_in=$curr_in; prev_out=$curr_out
         done
     ) &
@@ -407,8 +411,10 @@ stop_bw_monitor() {
         kill "$BW_MONITOR_PID" 2>/dev/null
         wait "$BW_MONITOR_PID" 2>/dev/null
         BW_MONITOR_PID=""
-        # Clear status line
-        printf '\0337\033[%d;1H\033[2K\0338' "$(tput lines 2>/dev/null || echo 24)"
+        # Reset scroll region to full terminal, clear status line
+        local lines; lines=$(tput lines 2>/dev/null || echo 24)
+        printf '\033[1;%dr' "$lines"
+        printf '\0337\033[%d;1H\033[2K\0338' "$lines"
     fi
 }
 
