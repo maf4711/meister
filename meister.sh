@@ -4,7 +4,7 @@
 # meister.sh
 #
 # Meister - macOS Maintenance, Update & Self-Healing
-# Version: 5.4
+# Version: 5.5
 # Date: 2026-04-10
 #
 # NEW in v1.1:
@@ -3357,7 +3357,7 @@ module_benchmark() {
 }
 
 #############################
-# 7b. EXTRA MODULES (v5.4+)
+# 7b. EXTRA MODULES (v5.5+)
 #############################
 
 module_healer() {
@@ -3747,6 +3747,160 @@ module_rendering_caches() {
     report_add FIX "QuickLook + font caches refreshed"
 }
 
+module_dev_caches() {
+    log INFO "Cleaning dev-tool caches..."
+    local total_before=0 total_after=0 cleaned=0
+    # npm / pnpm / yarn
+    if command_exists npm; then
+        bw_phase "Dev caches: npm"
+        local sz; sz=$(du -sk "$HOME/.npm" 2>/dev/null | awk '{print $1}'); total_before=$((total_before + ${sz:-0}))
+        $DRY_RUN || npm cache clean --force >/dev/null 2>&1
+        sz=$(du -sk "$HOME/.npm" 2>/dev/null | awk '{print $1}'); total_after=$((total_after + ${sz:-0}))
+        cleaned=$((cleaned + 1))
+    fi
+    if command_exists pnpm; then
+        bw_phase "Dev caches: pnpm"
+        $DRY_RUN || pnpm store prune >/dev/null 2>&1
+        cleaned=$((cleaned + 1))
+    fi
+    if command_exists yarn; then
+        bw_phase "Dev caches: yarn"
+        local sz; sz=$(du -sk "$HOME/Library/Caches/Yarn" 2>/dev/null | awk '{print $1}'); total_before=$((total_before + ${sz:-0}))
+        $DRY_RUN || yarn cache clean >/dev/null 2>&1
+        sz=$(du -sk "$HOME/Library/Caches/Yarn" 2>/dev/null | awk '{print $1}'); total_after=$((total_after + ${sz:-0}))
+        cleaned=$((cleaned + 1))
+    fi
+    # pip
+    if command_exists pip3; then
+        bw_phase "Dev caches: pip"
+        local cache_dir; cache_dir=$(pip3 cache dir 2>/dev/null)
+        local sz; sz=$(du -sk "$cache_dir" 2>/dev/null | awk '{print $1}'); total_before=$((total_before + ${sz:-0}))
+        $DRY_RUN || pip3 cache purge >/dev/null 2>&1
+        sz=$(du -sk "$cache_dir" 2>/dev/null | awk '{print $1}'); total_after=$((total_after + ${sz:-0}))
+        cleaned=$((cleaned + 1))
+    fi
+    # cargo (no official prune, use cargo-cache if installed)
+    if command_exists cargo; then
+        bw_phase "Dev caches: cargo"
+        local sz; sz=$(du -sk "$HOME/.cargo/registry" 2>/dev/null | awk '{print $1}'); total_before=$((total_before + ${sz:-0}))
+        if command_exists cargo-cache && ! $DRY_RUN; then
+            cargo cache --autoclean >/dev/null 2>&1
+        fi
+        sz=$(du -sk "$HOME/.cargo/registry" 2>/dev/null | awk '{print $1}'); total_after=$((total_after + ${sz:-0}))
+        cleaned=$((cleaned + 1))
+    fi
+    # go modules
+    if command_exists go; then
+        bw_phase "Dev caches: go"
+        local sz; sz=$(du -sk "$HOME/go/pkg/mod" 2>/dev/null | awk '{print $1}'); total_before=$((total_before + ${sz:-0}))
+        $DRY_RUN || go clean -modcache >/dev/null 2>&1
+        sz=$(du -sk "$HOME/go/pkg/mod" 2>/dev/null | awk '{print $1}'); total_after=$((total_after + ${sz:-0}))
+        cleaned=$((cleaned + 1))
+    fi
+    local freed_mb=$(( (total_before - total_after) / 1024 ))
+    log STEP "   ${cleaned} dev-cache(s) cleaned, ${freed_mb} MB freed"
+    [ "$freed_mb" -gt 100 ] && report_add FIX "Dev caches: ${freed_mb} MB freed"
+}
+
+module_node_modules_aged() {
+    log INFO "Finding ancient node_modules..."
+    bw_phase "node_modules: scanning ~/Developer"
+    [ -d "$HOME/Developer" ] || { log STEP "   ~/Developer missing"; return 0; }
+    local found=0 total_mb=0
+    while IFS= read -r dir; do
+        [ -d "$dir" ] || continue
+        local mb; mb=$(du -sm "$dir" 2>/dev/null | awk '{print $1}')
+        [ "${mb:-0}" -lt 50 ] 2>/dev/null && continue
+        local project; project=$(dirname "$dir" | sed "s|$HOME/||")
+        log STEP "     $project/node_modules: ${mb}MB (>180d unused)"
+        found=$((found + 1))
+        total_mb=$((total_mb + mb))
+        [ "$found" -ge 20 ] && break
+    done < <(find "$HOME/Developer" -maxdepth 5 -type d -name node_modules -mtime +180 -prune 2>/dev/null)
+    if [ "$found" -gt 0 ]; then
+        log WARN "   ${found} abandoned node_modules (~${total_mb} MB total) — run: find ~/Developer -name node_modules -mtime +180 -exec rm -rf {} +"
+        report_add WARN "${found} ancient node_modules (${total_mb} MB)"
+    else
+        log STEP "   No ancient node_modules"
+    fi
+}
+
+module_sleep_blockers() {
+    log INFO "Sleep assertions (what keeps Mac awake)..."
+    bw_phase "Sleep: querying assertions"
+    local assertions
+    assertions=$(pmset -g assertions 2>/dev/null | awk '/PreventUserIdleSystemSleep|PreventSystemSleep/ && / pid /' | head -10)
+    if [ -z "$assertions" ]; then
+        log STEP "   No processes blocking sleep"
+        return 0
+    fi
+    echo "$assertions" | while IFS= read -r line; do
+        local pid name; pid=$(echo "$line" | grep -oE 'pid [0-9]+' | awk '{print $2}')
+        name=$(echo "$line" | grep -oE 'pid [0-9]+\([^)]+\)' | sed 's/.*(\(.*\))/\1/')
+        [ -z "$name" ] && [ -n "$pid" ] && name=$(ps -p "$pid" -o comm= 2>/dev/null)
+        log STEP "     pid $pid ($name) — blocking sleep"
+    done
+    report_add WARN "$(echo "$assertions" | wc -l | tr -d ' ') sleep blocker(s) active"
+}
+
+module_launchservices_rebuild() {
+    log INFO "Rebuilding LaunchServices (fix 'Open With' duplicates)..."
+    bw_phase "LaunchServices: rebuilding DB"
+    local lsreg="/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/LaunchServices.framework/Versions/A/Support/lsregister"
+    [ -x "$lsreg" ] || { log STEP "   lsregister not found"; return 0; }
+    if ! $DRY_RUN; then
+        "$lsreg" -kill -r -domain local -domain system -domain user >/dev/null 2>&1
+        log FIX "   LaunchServices DB rebuilt"
+        report_add FIX "LaunchServices rebuilt"
+    else
+        log STEP "   [DRY-RUN] would rebuild"
+    fi
+}
+
+module_dsstore_cleanup() {
+    log INFO "Cleaning .DS_Store files..."
+    bw_phase "DS_Store: scanning"
+    local dirs=("$HOME/Developer" "$HOME/Documents" "$HOME/Desktop")
+    local total=0
+    for dir in "${dirs[@]}"; do
+        [ -d "$dir" ] || continue
+        local count; count=$(find "$dir" -name .DS_Store 2>/dev/null | wc -l | tr -d ' ')
+        if [ "$count" -gt 0 ]; then
+            bw_phase "DS_Store: rm $dir ($count)"
+            log STEP "   $dir: ${count} files"
+            $DRY_RUN || find "$dir" -name .DS_Store -delete 2>/dev/null
+            total=$((total + count))
+        fi
+    done
+    [ "$total" -gt 0 ] && { log FIX "   ${total} .DS_Store removed"; report_add FIX "${total} .DS_Store files"; }
+    [ "$total" -eq 0 ] && log STEP "   None found"
+}
+
+module_tcc_privacy_audit() {
+    log INFO "Privacy grants audit (camera/mic/screen recording)..."
+    bw_phase "TCC: reading user DB"
+    local tcc_db="$HOME/Library/Application Support/com.apple.TCC/TCC.db"
+    [ -f "$tcc_db" ] || { log STEP "   User TCC DB not accessible"; return 0; }
+    command_exists sqlite3 || { log STEP "   sqlite3 missing"; return 0; }
+    local grants
+    grants=$(sqlite3 "$tcc_db" "SELECT service, client FROM access WHERE auth_value IN (2,3)" 2>/dev/null)
+    if [ -z "$grants" ]; then
+        log STEP "   No user-level privacy grants"
+        return 0
+    fi
+    local sensitive_count=0
+    echo "$grants" | while IFS='|' read -r service client; do
+        case "$service" in
+            kTCCServiceCamera|kTCCServiceMicrophone|kTCCServiceScreenCapture|kTCCServiceSystemPolicyAllFiles)
+                local label="${service#kTCCService}"
+                log STEP "     $label: $client"
+                ;;
+        esac
+    done
+    sensitive_count=$(echo "$grants" | awk -F'|' '/kTCCServiceCamera|kTCCServiceMicrophone|kTCCServiceScreenCapture|kTCCServiceSystemPolicyAllFiles/' | wc -l | tr -d ' ')
+    [ "$sensitive_count" -gt 0 ] && report_add WARN "${sensitive_count} apps with Camera/Mic/Screen/FDA grants"
+}
+
 module_receipts_audit() {
     log INFO "Auditing orphan installer receipts..."
     bw_phase "Receipts: enumerating"
@@ -3961,7 +4115,7 @@ build_report_summary() {
     local summary="OK:${#REPORT_SUCCESS[@]} FIX:${#REPORT_FIXED[@]} WARN:${#REPORT_WARNINGS[@]} ERR:${#REPORT_ERRORS[@]}"
     local end_ts=$(date +%s)
     local total_mins=$(( (end_ts - SCRIPT_START_TIME) / 60 ))
-    echo "Meister v5.4 | ${total_mins}min | $summary"
+    echo "Meister v5.5 | ${total_mins}min | $summary"
 }
 
 send_report_notification() {
@@ -4843,6 +4997,28 @@ if [ "${1:-}" = "thermal" ]; then
     done
 fi
 
+# ── Free RAM (meister free) ──
+if [ "${1:-}" = "free" ]; then
+    echo -e "\033[1;34m  MEISTER FREE — Free up RAM & reset UI\033[0m"
+    echo ""
+    _ram_before=$(vm_stat | awk '/Pages free/ {gsub("\\.",""); printf "%d", $3 * 4 / 1024}')
+    echo "  RAM free before: ${_ram_before} MB"
+    echo "  Running sudo purge (may take 10-30s)..."
+    if sudo -v && sudo purge; then
+        _ram_after=$(vm_stat | awk '/Pages free/ {gsub("\\.",""); printf "%d", $3 * 4 / 1024}')
+        echo "  RAM free after:  ${_ram_after} MB  (Δ +$((_ram_after - _ram_before)) MB)"
+    else
+        echo "  Purge needs sudo"
+    fi
+    if [ "${2:-}" = "--restart-ui" ]; then
+        echo "  Restarting Finder + Dock..."
+        killall Finder 2>/dev/null
+        killall Dock 2>/dev/null
+        killall SystemUIServer 2>/dev/null
+    fi
+    exit 0
+fi
+
 # ── Healer (meister heal) ──
 if [ "${1:-}" = "heal" ]; then
     echo -e "\033[1;34m  MEISTER HEAL — Auto-Healing\033[0m"
@@ -4971,6 +5147,7 @@ TOOLS:
   meister dns          DNS leak test
   meister battery      Battery health report
   meister heal [--dry-run]  Proactive auto-healer (broken symlinks, orphans, DNS, casks)
+  meister free [--restart-ui]  Free RAM (sudo purge) + optionally restart Finder/Dock
   meister startup      Login items & launch agents audit
   meister wifi         Wi-Fi diagnostics & channel scan
   meister top [N]      Live process monitor (default: 3s refresh)
@@ -5103,7 +5280,7 @@ acquire_lock
 
 echo -e "${BOLD}${BLUE}"
 echo "  ╔══════════════════════════════════════════╗"
-echo "  ║        MEISTER v5.4                     ║"
+echo "  ║        MEISTER v5.5                     ║"
 echo "  ║   macOS Maintenance & Self-Healing           ║"
 $DRY_RUN && echo "  ║   [DRY-RUN MODE]                        ║"
 ! $MANUAL_FLAGS_SET && $AUTO_DETECT && echo "  ║   [AUTO-DETECT]                          ║"
@@ -5111,7 +5288,7 @@ echo "  ╚═══════════════════════
 echo -e "${NC}"
 
 start_bw_monitor
-log INFO "Meister v5.4 started ($(date))"
+log INFO "Meister v5.5 started ($(date))"
 $DRY_RUN && log WARN "DRY-RUN: No changes will be made"
 log STEP "   Logfile: $LOGFILE"
 [ -f "$MEISTER_CONFIG" ] && log STEP "   Config: $MEISTER_CONFIG loaded"
@@ -5159,8 +5336,8 @@ else
     OLLAMA_ENABLED=false
 fi
 
-# Modul-Anzahl berechnen (14 core + 10 extras + 1 healer + 5 maintenance)
-MODULE_TOTAL=30
+# Modul-Anzahl berechnen (14 core + 10 extras + 1 healer + 5 maintenance + 6 killer)
+MODULE_TOTAL=36
 $RUN_SUDO_TASKS && MODULE_TOTAL=$((MODULE_TOTAL + 1))
 
 # Preflight
@@ -5199,6 +5376,12 @@ if check_net; then
     run_module_safe "Time Sync"      module_time_sync
     run_module_safe "Render Caches"  module_rendering_caches
     run_module_safe "Receipts Audit" module_receipts_audit
+    run_module_safe "Dev Caches"     module_dev_caches
+    run_module_safe "node_modules"   module_node_modules_aged
+    run_module_safe "Sleep Blockers" module_sleep_blockers
+    run_module_safe ".DS_Store"      module_dsstore_cleanup
+    run_module_safe "LaunchServices" module_launchservices_rebuild
+    run_module_safe "Privacy Audit"  module_tcc_privacy_audit
 
     if $RUN_SUDO_TASKS; then
         section_header "System maintenance (sudo)"
