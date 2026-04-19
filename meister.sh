@@ -4,7 +4,7 @@
 # meister.sh
 #
 # Meister - macOS Maintenance, Update & Self-Healing
-# Version: 4.9
+# Version: 5.0
 # Date: 2026-04-10
 #
 # NEW in v1.1:
@@ -3319,24 +3319,35 @@ module_benchmark() {
 }
 
 #############################
-# 7b. EXTRA MODULES (v4.9+)
+# 7b. EXTRA MODULES (v5.0+)
 #############################
 
 module_healer() {
     log INFO "Healer — proactive auto-fixes..."
     local fixed=0
 
-    # 1. Broken symlinks in PATH dirs
+    # 1. Broken symlinks in PATH dirs (system bins need sudo)
     local sym_dirs=("$HOME/bin" "/opt/homebrew/bin" "/opt/homebrew/sbin" "/usr/local/bin")
+    local needs_sudo=0
     for dir in "${sym_dirs[@]}"; do
         [ -d "$dir" ] || continue
         while IFS= read -r link; do
             [ -z "$link" ] && continue
             log HEAL "   broken symlink: $link"
             fixed=$((fixed + 1))
-            $DRY_RUN || rm -f "$link"
+            $DRY_RUN && continue
+            if rm -f "$link" 2>/dev/null; then
+                :
+            elif sudo -n rm -f "$link" 2>/dev/null; then
+                :
+            else
+                log WARN "     needs sudo — skipped (run: sudo rm -f '$link')"
+                needs_sudo=$((needs_sudo + 1))
+                fixed=$((fixed - 1))
+            fi
         done < <(find "$dir" -maxdepth 1 -type l ! -exec test -e {} \; -print 2>/dev/null)
     done
+    [ "$needs_sudo" -gt 0 ] && report_add WARN "Healer: ${needs_sudo} symlink(s) need sudo"
 
     # 2. Orphan LaunchAgents (plist points to missing binary) → quarantine
     local agent_dir="$HOME/Library/LaunchAgents"
@@ -3367,18 +3378,21 @@ module_healer() {
         fi
     done < <(find "$HOME/Library/Preferences" -maxdepth 1 -name "*.plist" -size +0 2>/dev/null)
 
-    # 4. Broken casks (app source gone) → reinstall
+    # 4. Broken casks (app source gone) — report only, user decides reinstall vs uninstall
     if command_exists brew; then
+        local broken_cask_count=0
         while IFS= read -r name; do
             [ -z "$name" ] && continue
             local app_path
             app_path=$(brew info --cask "$name" 2>/dev/null | grep -oE "/Applications/[^']+\.app" | head -1)
             if [ -n "$app_path" ] && [ ! -d "$app_path" ]; then
-                log HEAL "   broken cask: $name (missing $app_path)"
-                fixed=$((fixed + 1))
-                $DRY_RUN || brew reinstall --cask --force "$name" >/dev/null 2>&1
+                log WARN "   broken cask: $name (missing $app_path)"
+                log STEP "     reinstall:  brew reinstall --cask --force $name"
+                log STEP "     OR remove:  brew uninstall --cask --force $name"
+                broken_cask_count=$((broken_cask_count + 1))
             fi
         done < <(brew list --cask 2>/dev/null)
+        [ "$broken_cask_count" -gt 0 ] && report_add WARN "${broken_cask_count} broken cask(s) — manual action needed"
     fi
 
     # 5. DNS broken → flush
@@ -3797,7 +3811,7 @@ build_report_summary() {
     local summary="OK:${#REPORT_SUCCESS[@]} FIX:${#REPORT_FIXED[@]} WARN:${#REPORT_WARNINGS[@]} ERR:${#REPORT_ERRORS[@]}"
     local end_ts=$(date +%s)
     local total_mins=$(( (end_ts - SCRIPT_START_TIME) / 60 ))
-    echo "Meister v4.9 | ${total_mins}min | $summary"
+    echo "Meister v5.0 | ${total_mins}min | $summary"
 }
 
 send_report_notification() {
@@ -4929,7 +4943,7 @@ acquire_lock
 
 echo -e "${BOLD}${BLUE}"
 echo "  ╔══════════════════════════════════════════╗"
-echo "  ║        MEISTER v4.9                     ║"
+echo "  ║        MEISTER v5.0                     ║"
 echo "  ║   macOS Maintenance & Self-Healing           ║"
 $DRY_RUN && echo "  ║   [DRY-RUN MODE]                        ║"
 ! $MANUAL_FLAGS_SET && $AUTO_DETECT && echo "  ║   [AUTO-DETECT]                          ║"
@@ -4937,7 +4951,7 @@ echo "  ╚═══════════════════════
 echo -e "${NC}"
 
 start_bw_monitor
-log INFO "Meister v4.9 started ($(date))"
+log INFO "Meister v5.0 started ($(date))"
 $DRY_RUN && log WARN "DRY-RUN: No changes will be made"
 log STEP "   Logfile: $LOGFILE"
 [ -f "$MEISTER_CONFIG" ] && log STEP "   Config: $MEISTER_CONFIG loaded"
