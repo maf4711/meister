@@ -3322,6 +3322,110 @@ module_benchmark() {
 # 7b. EXTRA MODULES (v4.7+)
 #############################
 
+module_healer() {
+    log INFO "Healer — proactive auto-fixes..."
+    local fixed=0
+
+    # 1. Broken symlinks in PATH dirs
+    local sym_dirs=("$HOME/bin" "/opt/homebrew/bin" "/opt/homebrew/sbin" "/usr/local/bin")
+    for dir in "${sym_dirs[@]}"; do
+        [ -d "$dir" ] || continue
+        while IFS= read -r link; do
+            [ -z "$link" ] && continue
+            log HEAL "   broken symlink: $link"
+            if ! $DRY_RUN; then
+                rm -f "$link" && fixed=$((fixed + 1))
+            fi
+        done < <(find "$dir" -maxdepth 1 -type l ! -exec test -e {} \; -print 2>/dev/null)
+    done
+
+    # 2. Orphan LaunchAgents (plist points to missing binary) → quarantine
+    local agent_dir="$HOME/Library/LaunchAgents"
+    if [ -d "$agent_dir" ]; then
+        while IFS= read -r plist; do
+            [ -f "$plist" ] || continue
+            local bin
+            bin=$(plutil -extract ProgramArguments.0 raw -o - "$plist" 2>/dev/null)
+            [ -z "$bin" ] && bin=$(plutil -extract Program raw -o - "$plist" 2>/dev/null)
+            if [ -n "$bin" ] && [ ! -e "$bin" ]; then
+                log HEAL "   orphan agent: $(basename "$plist") → missing $bin"
+                if ! $DRY_RUN; then
+                    launchctl unload "$plist" 2>/dev/null
+                    mv "$plist" "${plist}.disabled.$(date +%s)" && fixed=$((fixed + 1))
+                fi
+            fi
+        done < <(find "$agent_dir" -maxdepth 1 -name "*.plist" 2>/dev/null)
+    fi
+
+    # 3. Corrupt user plist files → quarantine
+    while IFS= read -r plist; do
+        [ -f "$plist" ] || continue
+        if ! plutil -lint "$plist" >/dev/null 2>&1; then
+            log HEAL "   corrupt plist: $(basename "$plist")"
+            if ! $DRY_RUN; then
+                mv "$plist" "${plist}.bad.$(date +%s)" && fixed=$((fixed + 1))
+            fi
+        fi
+    done < <(find "$HOME/Library/Preferences" -maxdepth 1 -name "*.plist" -size +0 2>/dev/null)
+
+    # 4. Broken casks (app source gone) → reinstall
+    if command_exists brew; then
+        while IFS= read -r name; do
+            [ -z "$name" ] && continue
+            local app_path
+            app_path=$(brew info --cask "$name" 2>/dev/null | grep -oE "/Applications/[^']+\.app" | head -1)
+            if [ -n "$app_path" ] && [ ! -d "$app_path" ]; then
+                log HEAL "   broken cask: $name (missing $app_path)"
+                if ! $DRY_RUN; then
+                    brew reinstall --cask --force "$name" >/dev/null 2>&1 && fixed=$((fixed + 1))
+                fi
+            fi
+        done < <(brew list --cask 2>/dev/null)
+    fi
+
+    # 5. DNS broken → flush
+    if ! dscacheutil -q host -a name apple.com 2>/dev/null | grep -q '^ip_address:'; then
+        log HEAL "   DNS resolution failing — flushing..."
+        if ! $DRY_RUN; then
+            sudo -n dscacheutil -flushcache 2>/dev/null
+            sudo -n killall -HUP mDNSResponder 2>/dev/null
+            fixed=$((fixed + 1))
+        fi
+    fi
+
+    # 6. Stale Xcode DerivedData locks (>24h old)
+    local dd_dir="$HOME/Library/Developer/Xcode/DerivedData"
+    if [ -d "$dd_dir" ]; then
+        local stale_locks
+        stale_locks=$(find "$dd_dir" -maxdepth 4 -name "*.lock" -mtime +1 2>/dev/null | wc -l | tr -d ' ')
+        if [ "$stale_locks" -gt 0 ]; then
+            log HEAL "   ${stale_locks} stale Xcode lock(s)"
+            if ! $DRY_RUN; then
+                find "$dd_dir" -maxdepth 4 -name "*.lock" -mtime +1 -delete 2>/dev/null
+                fixed=$((fixed + stale_locks))
+            fi
+        fi
+    fi
+
+    # 7. Homebrew post-install cleanup if doctor flags linker issues
+    if command_exists brew; then
+        if brew doctor 2>&1 | grep -qE "Unbrewed header files|broken symlinks in"; then
+            log HEAL "   brew doctor flagged linker issues — cleanup..."
+            if ! $DRY_RUN; then
+                brew cleanup -s >/dev/null 2>&1
+                fixed=$((fixed + 1))
+            fi
+        fi
+    fi
+
+    if [ "$fixed" -gt 0 ]; then
+        log FIX "   Healer: ${fixed} fix(es) applied"
+        report_add FIX "Healer: ${fixed} auto-fixes"
+    else
+        log STEP "   Nothing to heal — system clean"
+    fi
+}
+
 module_tm_health() {
     log INFO "Checking Time Machine..."
     if ! command_exists tmutil; then log STEP "   tmutil not available"; return 0; fi
@@ -4577,6 +4681,17 @@ if [ "${1:-}" = "thermal" ]; then
     done
 fi
 
+# ── Healer (meister heal) ──
+if [ "${1:-}" = "heal" ]; then
+    echo -e "\033[1;34m  MEISTER HEAL — Auto-Healing\033[0m"
+    echo ""
+    DRY_RUN=false
+    [ "${2:-}" = "--dry-run" ] && DRY_RUN=true
+    $DRY_RUN && echo "  [DRY-RUN MODE — no changes]" && echo ""
+    module_healer
+    exit 0
+fi
+
 # ── Speedtest (meister speed) ──
 if [ "${1:-}" = "speed" ]; then
     echo -e "\033[1;34m  MEISTER SPEED — Network Speed Test\033[0m"
@@ -4871,8 +4986,8 @@ else
     OLLAMA_ENABLED=false
 fi
 
-# Modul-Anzahl berechnen (14 core + 10 extras)
-MODULE_TOTAL=24
+# Modul-Anzahl berechnen (14 core + 10 extras + 1 healer)
+MODULE_TOTAL=25
 $RUN_SUDO_TASKS && MODULE_TOTAL=$((MODULE_TOTAL + 1))
 
 # Preflight
@@ -4882,6 +4997,7 @@ selfheal_preflight
 module_timer_stop "Preflight"
 
 if check_net; then
+    run_module_safe "Healer"         module_healer
     run_module_safe "Homebrew"       module_homebrew
     run_module_safe "App Store"      module_mas
     run_module_safe "Ollama Models"  module_ollama
