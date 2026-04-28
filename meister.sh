@@ -4,8 +4,8 @@
 # meister.sh
 #
 # Meister - macOS Maintenance, Update & Self-Healing
-# Version: 5.7
-# Date: 2026-04-10
+# Version: 5.8
+# Date: 2026-04-29
 #
 # NEW in v1.1:
 #  - Dotfiles Sync: meister push/pull/setup/init/scan/clone/bootstrap/status
@@ -53,6 +53,12 @@
 #############################
 # 1. CONFIGURATION
 #############################
+
+# Version is the single source of truth — extracted from the `# Version:`
+# header comment, which release.sh also reads. Don't hardcode version
+# strings elsewhere; reference $MEISTER_VERSION instead.
+MEISTER_VERSION=$(awk '/^# Version:/ {print $3; exit}' "${BASH_SOURCE[0]}" 2>/dev/null)
+MEISTER_VERSION=${MEISTER_VERSION:-unknown}
 
 MEISTER_DIR="$HOME/.meister"
 HEAL_LOG="$MEISTER_DIR/heal.log"
@@ -4214,7 +4220,7 @@ build_report_summary() {
     local summary="OK:${#REPORT_SUCCESS[@]} FIX:${#REPORT_FIXED[@]} WARN:${#REPORT_WARNINGS[@]} ERR:${#REPORT_ERRORS[@]}"
     local end_ts=$(date +%s)
     local total_mins=$(( (end_ts - SCRIPT_START_TIME) / 60 ))
-    echo "Meister v5.7 | ${total_mins}min | $summary"
+    echo "Meister v${MEISTER_VERSION} | ${total_mins}min | $summary"
 }
 
 send_report_notification() {
@@ -5215,7 +5221,7 @@ fi
 for arg in "$@"; do
     case "$arg" in
         --help)    set -- "-h"; break ;;
-        --version) echo "meister v2.1"; exit 0 ;;
+        --version) echo "meister v${MEISTER_VERSION}"; exit 0 ;;
         --dry-run) set -- "-n"; break ;;
         --menu)    set -- "menu"; break ;;
         --*)       echo "[ERROR] Unknown option: $arg (see meister -h)"; exit 1 ;;
@@ -5399,7 +5405,7 @@ acquire_lock
 
 echo -e "${BOLD}${BLUE}"
 echo "  ╔══════════════════════════════════════════╗"
-echo "  ║        MEISTER v5.7                     ║"
+printf '  ║        MEISTER v%-24s║\n' "$MEISTER_VERSION"
 echo "  ║   macOS Maintenance & Self-Healing           ║"
 $DRY_RUN && echo "  ║   [DRY-RUN MODE]                        ║"
 ! $MANUAL_FLAGS_SET && $AUTO_DETECT && echo "  ║   [AUTO-DETECT]                          ║"
@@ -5407,7 +5413,7 @@ echo "  ╚═══════════════════════
 echo -e "${NC}"
 
 start_bw_monitor
-log INFO "Meister v5.7 started ($(date))"
+log INFO "Meister v${MEISTER_VERSION} started ($(date))"
 $DRY_RUN && log WARN "DRY-RUN: No changes will be made"
 log STEP "   Logfile: $LOGFILE"
 [ -f "$MEISTER_CONFIG" ] && log STEP "   Config: $MEISTER_CONFIG loaded"
