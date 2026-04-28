@@ -30,26 +30,31 @@ echo "--- Step 1: Update repo ---"
 cd "$SCRIPT_DIR"
 git add meister.sh tools/ Formula/ LICENSE .gitignore
 if git diff --cached --quiet; then
-    echo "No changes"
+    echo "No staged changes"
 else
     git commit -m "meister v${VERSION}"
-    git push origin main
-    echo "Pushed"
 fi
+# Push regardless — there may be committed-but-unpushed commits.
+# Bug history: skipping this push when nothing was staged caused
+# `gh release create` to tag GitHub's HEAD (which lagged behind local),
+# producing a v-tag pointing at the pre-fix commit.
+git push origin main
+echo "Pushed (HEAD = $(git rev-parse --short HEAD))"
 
-# 2. Create GitHub Release
+# 2. Create GitHub Release pinned to local HEAD's exact SHA
 echo ""
 echo "--- Step 2: GitHub Release v${VERSION} ---"
+TARGET_SHA=$(git rev-parse HEAD)
 if gh release view "v${VERSION}" -R "$REPO" &>/dev/null; then
     echo "Release v${VERSION} already exists - deleting and recreating"
-    gh release delete "v${VERSION}" -R "$REPO" --yes
+    gh release delete "v${VERSION}" -R "$REPO" --yes --cleanup-tag
     git tag -d "v${VERSION}" 2>/dev/null || true
-    git push origin ":refs/tags/v${VERSION}" 2>/dev/null || true
 fi
 gh release create "v${VERSION}" -R "$REPO" \
+    --target "$TARGET_SHA" \
     --title "meister v${VERSION}" \
     --notes "macOS Maintenance & Self-Healing Script v${VERSION}"
-echo "Release created: https://github.com/$REPO/releases/tag/v${VERSION}"
+echo "Release created at $TARGET_SHA: https://github.com/$REPO/releases/tag/v${VERSION}"
 
 # 3. Get SHA256 of tarball
 echo ""
