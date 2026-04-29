@@ -4,7 +4,7 @@
 # meister.sh
 #
 # Meister - macOS Maintenance, Update & Self-Healing
-# Version: 5.8
+# Version: 5.9
 # Date: 2026-04-29
 #
 # NEW in v1.1:
@@ -1626,6 +1626,36 @@ module_persistence_audit() {
 
 # ── [148] TCC-AUDIT (Privacy permissions) ──
 
+# Returns 0 if the TCC `client` (path or bundle id) currently resolves
+# to an installed app, 1 otherwise. Shared by audit + heal so detection
+# stays consistent.
+#
+# Detection: mdfind first (fast). If mdfind misses, fall back to
+# osascript which queries LaunchServices directly. mdfind alone produced
+# false positives for ~/Applications WebApps (Spotlight excludes that
+# path under some configs); LaunchServices is authoritative.
+tcc_client_exists() {
+    local client="$1"
+    if [[ "$client" == /* ]]; then
+        [ -e "$client" ]
+        return $?
+    fi
+    if [[ "$client" == *.* ]]; then
+        if mdfind "kMDItemCFBundleIdentifier == '$client'" 2>/dev/null | grep -q .; then
+            return 0
+        fi
+        # mdfind miss — confirm via LaunchServices before flagging orphan
+        local ls_id
+        ls_id=$(osascript -e "try
+            id of application id \"$client\"
+        end try" 2>/dev/null)
+        [ -n "$ls_id" ]
+        return $?
+    fi
+    # No path, no dotted bundle id — assume exists (don't flag as orphan)
+    return 0
+}
+
 module_tcc_audit() {
     log INFO "TCC-Audit (Privacy permissions)..."
 
@@ -1673,22 +1703,11 @@ module_tcc_audit() {
                     [ -z "$app" ] && continue
                     local app_short=$(echo "$app" | sed 's|.*/||')
 
-                    # Checkingn ob die App still installed ist
-                    local app_exists=true
-                    if [[ "$app" == /* ]] && [ ! -e "$app" ]; then
-                        app_exists=false
-                    elif [[ "$app" == com.* ]]; then
-                        # Bundle-ID - checking ob App existiert
-                        if ! mdfind "kMDItemCFBundleIdentifier == '$app'" 2>/dev/null | grep -q .; then
-                            app_exists=false
-                        fi
-                    fi
-
-                    if ! $app_exists; then
+                    if tcc_client_exists "$app"; then
+                        log STEP "     $app_short"
+                    else
                         log WARN "     ORPHANED: $app_short has ${service_name} but is no longer installed!"
                         tcc_findings=$((tcc_findings + 1))
-                    else
-                        log STEP "     $app_short"
                     fi
                 done <<< "$apps"
             fi
@@ -3522,6 +3541,44 @@ module_healer() {
             fixed=$((fixed + 1))
             $DRY_RUN || brew cleanup -s >/dev/null 2>&1
         fi
+    fi
+
+    # 8. Orphan TCC entries — apps that were uninstalled but still hold
+    # AppleEvents / Accessibility / etc. permissions. tccutil reset is the
+    # supported path; paths-as-client (CLIs without a bundle id) are left
+    # alone because direct sqlite mutation on TCC.db is risky.
+    bw_phase "Healer: TCC orphans"
+    local user_tcc="$HOME/Library/Application Support/com.apple.TCC/TCC.db"
+    if [ -f "$user_tcc" ] && command_exists sqlite3; then
+        # Map kTCCService<X> → tccutil's <X> argument
+        local -a tcc_services=(AppleEvents Accessibility ScreenCapture Microphone Camera SystemPolicyAllFiles SystemPolicySysAdminFiles)
+        for svc in "${tcc_services[@]}"; do
+            local clients
+            clients=$(sqlite3 "$user_tcc" \
+                "SELECT client FROM access WHERE service='kTCCService${svc}' AND auth_value=2;" 2>/dev/null) \
+                || continue
+            [ -z "$clients" ] && continue
+            while IFS= read -r client; do
+                [ -z "$client" ] && continue
+                tcc_client_exists "$client" && continue
+
+                if [[ "$client" == /* ]]; then
+                    # Path-based clients can't be reset by tccutil — note for
+                    # manual review; auto-deleting from TCC.db risks corruption.
+                    log STEP "   orphan TCC ($svc) path-based: $client (manual cleanup needed)"
+                    continue
+                fi
+
+                bw_phase "Healer: tccutil reset $svc $client"
+                log HEAL "   orphan TCC: $client → resetting ${svc}"
+                fixed=$((fixed + 1))
+                $DRY_RUN && continue
+                if ! tccutil reset "$svc" "$client" >/dev/null 2>&1; then
+                    log WARN "     tccutil reset $svc $client failed"
+                    fixed=$((fixed - 1))
+                fi
+            done <<< "$clients"
+        done
     fi
 
     if [ "$fixed" -gt 0 ]; then
