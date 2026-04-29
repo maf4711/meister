@@ -4,7 +4,7 @@
 # meister.sh
 #
 # Meister - macOS Maintenance, Update & Self-Healing
-# Version: 5.10
+# Version: 5.11
 # Date: 2026-04-29
 #
 # NEW in v1.1:
@@ -3595,9 +3595,12 @@ module_healer() {
                 fi
                 # busy_timeout — TCC.db uses rollback journaling (not WAL),
                 # so concurrent tccd locks are possible; wait up to 5s.
+                # Capture stderr only — PRAGMA echoes its old value to stdout,
+                # which previously got mistaken for an error.
                 local sql_err
-                sql_err=$(sqlite3 "$user_tcc" \
-                    "PRAGMA busy_timeout=5000; DELETE FROM access WHERE service='kTCCService${svc}' AND client='${client//\'/\'\'}';" 2>&1)
+                sql_err=$(sqlite3 -bail -cmd "PRAGMA busy_timeout=5000;" "$user_tcc" \
+                    "DELETE FROM access WHERE service='kTCCService${svc}' AND client='${client//\'/\'\'}';" \
+                    2>&1 >/dev/null)
                 if [ -n "$sql_err" ]; then
                     log WARN "     sqlite DELETE failed: $sql_err — restoring backup"
                     cp "$tcc_backup" "$user_tcc" 2>/dev/null
