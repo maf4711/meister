@@ -4,7 +4,7 @@
 # meister.sh
 #
 # Meister - macOS Maintenance, Update & Self-Healing
-# Version: 5.12
+# Version: 5.13
 # Date: 2026-04-29
 #
 # NEW in v1.1:
@@ -1630,14 +1630,20 @@ module_persistence_audit() {
 # to an installed app, 1 otherwise. Shared by audit + heal so detection
 # stays consistent.
 #
-# Detection cascade: mdfind → osascript (LaunchServices) → pluginkit.
-# Each tier catches what the previous misses:
-#   - mdfind: fast Spotlight lookup — but Spotlight may exclude
-#     ~/Applications (Safari WebApps live there)
-#   - osascript: LaunchServices is authoritative for installed apps,
-#     but doesn't know about widgets/extensions
-#   - pluginkit: covers app extensions, widgets, share items, etc.
-#     (e.g. com.apple.weather.widget which is not an .app)
+# Detection cascade for whether a TCC client (path or bundle id) is
+# currently present on the system.
+#
+# Hard guard first: bundle ids starting with com.apple. are NEVER flagged
+# as orphan, even if the cascade can't locate them. macOS system daemons
+# (e.g. com.apple.familycircled, com.apple.triald, com.apple.gamed) live
+# in /System/Library and aren't .app bundles, widgets, or extensions —
+# they evade mdfind/osascript/pluginkit. A live run of v5.12 deleted 10
+# such Liverpool entries before this guard was added; manual surgical
+# restore + this guard prevents recurrence. The trade-off (rare orphan
+# Apple bundle id stays in TCC) is far cheaper than nuking iCloud
+# Keychain sync permissions for system services.
+#
+# For non-Apple bundle ids the cascade is mdfind → osascript → pluginkit.
 # Bundle id is "exists" if ANY tier finds it.
 tcc_client_exists() {
     local client="$1"
@@ -1645,6 +1651,8 @@ tcc_client_exists() {
         [ -e "$client" ]
         return $?
     fi
+    # Apple system bundles: always treat as present
+    [[ "$client" == com.apple.* ]] && return 0
     if [[ "$client" == *.* ]]; then
         if mdfind "kMDItemCFBundleIdentifier == '$client'" 2>/dev/null | grep -q .; then
             return 0
