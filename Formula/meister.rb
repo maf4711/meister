@@ -1,10 +1,10 @@
 class Meister < Formula
   desc "macOS Maintenance, Self-Healing & Dotfiles Sync"
   homepage "https://github.com/maf4711/homebrew-meister"
-  url "https://github.com/maf4711/homebrew-meister/archive/refs/tags/v5.11.tar.gz"
-  sha256 "8fe0ab20956a623a690efb63d83c0dbacf982813d6d0130e0d854ddb08a7c58e"
+  url "https://github.com/maf4711/homebrew-meister/archive/refs/tags/v5.12.tar.gz"
+  sha256 "4f31ff5cb322a1224b3dca179322393626c3d92af9b3e47bb5f997a27d7aaf74"
   license "GPL-3.0-only"
-  version "5.11"
+  version "5.12"
 
   depends_on :macos
 
