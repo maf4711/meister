@@ -4,7 +4,7 @@
 # meister.sh
 #
 # Meister - macOS Maintenance, Update & Self-Healing
-# Version: 5.11
+# Version: 5.12
 # Date: 2026-04-29
 #
 # NEW in v1.1:
@@ -1630,10 +1630,15 @@ module_persistence_audit() {
 # to an installed app, 1 otherwise. Shared by audit + heal so detection
 # stays consistent.
 #
-# Detection: mdfind first (fast). If mdfind misses, fall back to
-# osascript which queries LaunchServices directly. mdfind alone produced
-# false positives for ~/Applications WebApps (Spotlight excludes that
-# path under some configs); LaunchServices is authoritative.
+# Detection cascade: mdfind → osascript (LaunchServices) → pluginkit.
+# Each tier catches what the previous misses:
+#   - mdfind: fast Spotlight lookup — but Spotlight may exclude
+#     ~/Applications (Safari WebApps live there)
+#   - osascript: LaunchServices is authoritative for installed apps,
+#     but doesn't know about widgets/extensions
+#   - pluginkit: covers app extensions, widgets, share items, etc.
+#     (e.g. com.apple.weather.widget which is not an .app)
+# Bundle id is "exists" if ANY tier finds it.
 tcc_client_exists() {
     local client="$1"
     if [[ "$client" == /* ]]; then
@@ -1644,13 +1649,16 @@ tcc_client_exists() {
         if mdfind "kMDItemCFBundleIdentifier == '$client'" 2>/dev/null | grep -q .; then
             return 0
         fi
-        # mdfind miss — confirm via LaunchServices before flagging orphan
         local ls_id
         ls_id=$(osascript -e "try
             id of application id \"$client\"
         end try" 2>/dev/null)
-        [ -n "$ls_id" ]
-        return $?
+        [ -n "$ls_id" ] && return 0
+        if command_exists pluginkit; then
+            pluginkit -m -i "$client" 2>/dev/null | grep -q .
+            return $?
+        fi
+        return 1
     fi
     # No path, no dotted bundle id — assume exists (don't flag as orphan)
     return 0
@@ -3556,7 +3564,15 @@ module_healer() {
     if [ -f "$user_tcc" ] && command_exists sqlite3; then
         local tcc_backup_taken=false
         local tcc_backup="${user_tcc}.meister-backup-$(date +%Y%m%d_%H%M%S)"
-        local -a tcc_services=(AppleEvents Accessibility ScreenCapture Microphone Camera SystemPolicyAllFiles SystemPolicySysAdminFiles)
+        # Discover services dynamically — Apple keeps adding new TCC categories
+        # (FileProviderDomain, BluetoothAlways, SystemPolicyDownloadsFolder, …).
+        # A static list goes stale; DISTINCT covers everything that's actually
+        # in the user's DB. Strip the kTCCService prefix for the loop body.
+        local -a tcc_services
+        while IFS= read -r svc_full; do
+            [ -z "$svc_full" ] && continue
+            tcc_services+=("${svc_full#kTCCService}")
+        done < <(sqlite3 "$user_tcc" "SELECT DISTINCT service FROM access WHERE auth_value=2;" 2>/dev/null)
         for svc in "${tcc_services[@]}"; do
             local clients
             clients=$(sqlite3 "$user_tcc" \
